@@ -90,6 +90,7 @@ bpy.context.scene.cycles.device = 'GPU'
 cam = bpy.context.scene.camera.data
 cam.type = 'PANO'
 cam.panorama_type = 'EQUIRECTANGULAR'
+cam.clip_start = 0.01
 print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 
 # Save the scene as a blend file
