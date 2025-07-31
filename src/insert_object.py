@@ -77,8 +77,13 @@ insertion_point = Vector((x, y, z))
 obj_path = os.path.join(input_path, "obj/scene.gltf")
 bpy.ops.import_scene.gltf(filepath=obj_path)
 
-bpy.context.object.location = insertion_point
-bpy.context.object.scale = Vector((0.25, 0.25, 0.25))
+selected_objects = bpy.context.selected_objects
+if selected_objects:
+    imported_object = selected_objects[0]
+    imported_object.location = insertion_point
+    imported_object.scale = Vector((0.25, 0.25, 0.25))
+else:
+    raise RuntimeError("No object was selected after importing the GLTF file.")
 env_tex.image.colorspace_settings.name = 'Filmic sRGB'
 mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
 
