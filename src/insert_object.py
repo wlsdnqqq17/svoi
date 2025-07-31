@@ -77,19 +77,14 @@ insertion_point = Vector((x, y, z))
 obj_path = os.path.join(input_path, "obj/scene.gltf")
 bpy.ops.import_scene.gltf(filepath=obj_path)
 
-
-for obj in bpy.context.selected_objects:
-    if obj.type == 'MESH':
-        obj.location = insertion_point
-        print(f"Inserted object: {obj.name} at {obj.location}")
-    
-
+bpy.context.object.location = insertion_point
+bpy.context.object.scale = Vector((0.25, 0.25, 0.25))
 env_tex.image.colorspace_settings.name = 'Filmic sRGB'
 mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
 
 # Render
 scene = bpy.context.scene
-scene.render.resolution_percentage = 25
+scene.render.resolution_percentage = 100
 
 scene.use_nodes = True
 tree = scene.node_tree
@@ -106,8 +101,8 @@ scale_node = nodes.new(type='CompositorNodeScale')
 img_path = os.path.join(input_path, "input.jpg")
 image_node.image = bpy.data.images.load(img_path)
 scale_node.space = 'RELATIVE'
-scale_node.inputs[1].default_value = 0.25 
-scale_node.inputs[2].default_value = 0.25 
+scale_node.inputs[1].default_value = 1
+scale_node.inputs[2].default_value = 1 
 
 render_layers.location = (-400, 100)
 image_node.location = (-600, -100)
