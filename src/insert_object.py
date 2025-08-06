@@ -2,51 +2,61 @@ import bpy
 import os
 import sys
 import math
-from mathutils import Vector
+import numpy as np
+from mathutils import Matrix, Vector
 
-folder_name = sys.argv[9]
+folder_name = sys.argv[6]
 input_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
-fspy_path = os.path.join(input_path, "plane.fspy")
 output_path = os.path.join("/Users/jinwoo/Documents/work/svoi/out", folder_name)
 
-def intersect_with_yz_plane(C, P):
-    dir = P - C
-    t = -C.x / dir.x
-    return C + dir * t
+img_width = int(sys.argv[4])
+img_height = int(sys.argv[5])
+insertion_points = Vector([float(x) for x in sys.argv[1:4]])
 
-def pixel_to_world(px, py):
-    cam = bpy.context.scene.camera
-    print(f"Camera: {cam.name}")
-    frame_local = cam.data.view_frame(scene=bpy.context.scene)
-    rt, rb, lb, lt = [cam.matrix_world @ v for v in frame_local]
-    width = int(sys.argv[7])
-    height = int(sys.argv[8])
+# Load camera intrinsics and pose
+K = np.load(os.path.join(input_path, "K.npy"))
+fx = K[0][0]
+fy = K[1][1]
+cx = K[0][2]
+cy = K[1][2]
+c2w = np.load(os.path.join(input_path, "c2w.npy"))
 
-    x_ratio = px / width
-    top_interp = lt.lerp(rt, x_ratio)
-    bottom_interp = lb.lerp(rb, x_ratio)
-    y_ratio = 1 - py / height
-    near_point = bottom_interp.lerp(top_interp, y_ratio)
-    camera_location = cam.matrix_world.translation
-    return intersect_with_yz_plane(camera_location, near_point)
-
-
-# Clear existing objects
+# Clear all objects
 for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
-# Load the fspy file
-base_dir = os.getcwd()
-bpy.ops.fspy_blender.import_project(filepath=fspy_path)
+# Add a camera
+cam_location = Vector(c2w[3][:-1])
+look_dir = Vector((1, 0, 0))
+target = cam_location + look_dir
+
+cam_data = bpy.data.cameras.new(name="Camera")
+cam_obj = bpy.data.objects.new("Camera", cam_data)
+bpy.context.collection.objects.link(cam_obj)
+cam_obj.location = cam_location
+
+cam_obj.rotation_mode = 'QUATERNION'
+direction = (target - cam_location).normalized()
+cam_obj.rotation_quaternion = direction.to_track_quat('-Z', 'Y')
+
+bpy.context.scene.camera = cam_obj
 bpy.context.scene.render.engine = 'CYCLES'
-bpy.context.scene.cycles.samples = 64
+bpy.context.scene.cycles.samples = 128
 bpy.context.scene.cycles.use_denoising = True
-world = bpy.context.scene.world
-world.use_nodes = True
-nodes = world.node_tree.nodes
-links = world.node_tree.links
+bpy.context.scene.cycles.device = 'GPU'
+
+cam = bpy.context.scene.camera.data
+cam.type = 'PERSP'
+cam.lens = fx * 36 / img_width
+cam.sensor_width = 36
+cam.shift_x = -(cx - img_width / 2) / img_width
+cam.shift_y = (cy - img_height / 2) / img_height
+cam.clip_start = 0.01
+print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 
 # Import environment map
+world = bpy.context.scene.world
+nodes = world.node_tree.nodes
 for node in nodes:
     nodes.remove(node)
 tex_coord = nodes.new(type='ShaderNodeTexCoord')
@@ -59,36 +69,36 @@ mapping.location = (-600, 0)
 env_tex.location = (-400, 0)
 background.location = (-200, 0)
 output.location = (0, 0)
+mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
+
+links = world.node_tree.links
 links.new(tex_coord.outputs['Generated'], mapping.inputs['Vector'])
 links.new(mapping.outputs['Vector'], env_tex.inputs['Vector'])
 links.new(env_tex.outputs['Color'], background.inputs['Color'])
 links.new(background.outputs['Background'], output.inputs['Surface'])
+
+# Load environment image
 image_path = os.path.join(output_path, "envmap.png")
 image = bpy.data.images.load(image_path)
 env_tex.image = image
+env_tex.image.colorspace_settings.name = 'Filmic sRGB'
 image.pack()
 bpy.context.scene.render.film_transparent = True
-print("Imported:", image.name)
 
-# Browse insertion objects
-px, py = int(sys.argv[5]), int(sys.argv[6])
-x, y, z = pixel_to_world(px, py)
-insertion_point = Vector((x, y, z))
+# Insert an object
 obj_path = os.path.join(input_path, "obj/scene.gltf")
 bpy.ops.import_scene.gltf(filepath=obj_path)
-
 selected_objects = bpy.context.selected_objects
-if selected_objects:
-    imported_object = selected_objects[0]
-    imported_object.location = insertion_point
-    imported_object.scale = Vector((0.25, 0.25, 0.25))
-else:
-    raise RuntimeError("No object was selected after importing the GLTF file.")
-env_tex.image.colorspace_settings.name = 'Filmic sRGB'
-mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
+if not selected_objects:
+    raise RuntimeError("No objects found in the imported GLTF file.")
+imported_obj = selected_objects[0]
+imported_obj.location = insertion_points
+imported_obj.scale = Vector((0.05, 0.05, 0.05)) 
 
-# Render
+# Render 
 scene = bpy.context.scene
+scene.render.resolution_x = img_width
+scene.render.resolution_y = img_height
 scene.render.resolution_percentage = 100
 
 scene.use_nodes = True
@@ -122,7 +132,7 @@ links.new(alpha_over.outputs['Image'], composite.inputs['Image'])
 
 
 # Save Blender file
-blend_path = os.path.join(output_path, "insert_object.blend")
+blend_path = os.path.join(output_path, "insert_object2.blend")
 if os.path.exists(blend_path):
     os.remove(blend_path)
 bpy.ops.wm.save_as_mainfile(filepath=blend_path)
