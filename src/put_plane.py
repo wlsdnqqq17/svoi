@@ -3,23 +3,23 @@ import os
 import random
 from mathutils import Vector
 
-tex_dir = "./dataset/Asphalt013_4K-JPG" 
-name = "Asphalt013_4K"
+tex_dir = "../dataset/abstract_1-4K" 
+name = "4K-abstract_1"
 
 for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
-color_path = os.path.join(tex_dir, f"{name}_Color.jpg")
-roughness_path = os.path.join(tex_dir, f"{name}_Roughness.jpg")
-normal_path = os.path.join(tex_dir, f"{name}_NormalGL.jpg")
+color_path = os.path.join(tex_dir, f"{name}-diffuse.jpg")
+roughness_path = os.path.join(tex_dir, f"{name}-specular.jpg")
+normal_path = os.path.join(tex_dir, f"{name}-normal.jpg")
 
 bpy.ops.mesh.primitive_plane_add(size=5, location=(0, 0, 0))
 plane = bpy.context.active_object
-plane.name = "AsphaltPlane"
+plane.name = "AbstractPlane"
 plane_size = plane.dimensions.xy 
 
 
-mat = bpy.data.materials.new(name="Asphalt_Material")
+mat = bpy.data.materials.new(name="Abstract_Material")
 mat.use_nodes = True
 nodes = mat.node_tree.nodes
 links = mat.node_tree.links
@@ -75,9 +75,9 @@ for image in bpy.data.images:
         image.pack()
 
 glb_paths = [
-    "./dataset/1.glb",
-    "./dataset/2.glb",
-    "./dataset/3.glb"
+    "../dataset/1.glb",
+    "../dataset/2.glb",
+    "../dataset/3.glb"
 ]
 
 TARGET_MAX_DIM = 1.0
@@ -87,35 +87,8 @@ for i, glb_path in enumerate(glb_paths):
     # 1) GLB 임포트
     bpy.ops.import_scene.gltf(filepath=glb_path)
     imported = [o for o in bpy.context.selected_objects if o.type == 'MESH']
-    if not imported:
-        print(f"[WARNING] No mesh found in {glb_path}")
-        continue
-    
-    # 2) 여러 메쉬가 있으면 하나로 병합
-    bpy.ops.object.select_all(action='DESELECT')
-    for o in imported: o.select_set(True)
-    bpy.context.view_layer.objects.active = imported[0]
-    bpy.ops.object.join()
-    obj = bpy.context.active_object
-    obj.name = f"InsertedObject_{i}"
-    bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
-
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-    
-    current_max = max(obj.dimensions)
-    factor = TARGET_MAX_DIM / current_max
-    obj.scale = (factor, factor, factor)
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-    
-    half_x = plane.dimensions.x / 2 - PADDING
-    half_y = plane.dimensions.y / 2 - PADDING
-    rand_x = random.uniform(-half_x, half_x)
-    rand_y = random.uniform(-half_y, half_y)
-    print(f"[INFO] Placing object {i} at ({rand_x}, {rand_y})")
-    obj.location = (rand_x, 0, rand_y)  
 
 
-    print(f"[OK] Inserted {obj.name} at origin")
 
 blend_path = os.path.join(os.path.dirname(bpy.data.filepath), "plane.blend")
 if os.path.exists(blend_path):

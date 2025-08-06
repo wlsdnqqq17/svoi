@@ -10,4 +10,4 @@ height=$7
 folder_name=$8
 
 python gen_fenv.py "$X" "$Y" "$Z" "$folder_name"
-blender --background --python insert_object.py -- "$orig_x" "$orig_y" "$width" "$height" "$folder_name"
+python insert_object.py "$X" "$Y" "$Z" "$width" "$height" "$folder_name"
