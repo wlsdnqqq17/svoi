@@ -4,10 +4,15 @@ from mathutils import Quaternion, Vector
 import math
 import sys
 
+if len(sys.argv) != 5:
+    print("Usage: python gen_fenv.py <insertion_x> <insertion_y> <insertion_z> <folder_name>")
+    sys.exit(1)
+
 folder_name = sys.argv[4]
 insertion_points = [float(x) for x in sys.argv[1:4]]
 base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
 glb_path = os.path.join(base_path, "full_scene.glb")
+gltf_path = os.path.join(base_path, "full_scene.gltf")
 image_path = os.path.join(base_path, "global.png")
 
 
@@ -17,7 +22,7 @@ for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
 # Load the glb file
-bpy.ops.import_scene.gltf(filepath=glb_path)
+bpy.ops.import_scene.gltf(filepath=gltf_path)
 
 q_rot = Quaternion((0, -1, 1, 0))
 
