@@ -74,7 +74,9 @@ mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
 
 # Add a camera
 cam_location = Vector(insertion_points[:3])
-cam_location.z += 0.1
+cam_location.z += 0.05
+cam_location.x -= 0.05
+
 look_dir = Vector((-1, 0, 0))
 target = cam_location + look_dir
 
