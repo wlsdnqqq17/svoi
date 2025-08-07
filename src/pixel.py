@@ -60,7 +60,7 @@ def click_event(event, x, y, flags, param):
         cv2.destroyAllWindows()
         cv2.waitKey(10)  
 
-        os.system(f'./run.sh {X} {Y} {Z} {orig_x} {orig_y} {width} {height} {folder_name}')
+        os.system(f'./helper.sh {X} {Y} {Z} {orig_x} {orig_y} {width} {height} {folder_name}')
 
 cv2.imshow('Image', resized_image)
 cv2.setMouseCallback('Image', click_event)
