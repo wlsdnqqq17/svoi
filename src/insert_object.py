@@ -79,21 +79,41 @@ links.new(background.outputs['Background'], output.inputs['Surface'])
 
 # Load environment image
 image_path = os.path.join(output_path, "envmap.png")
+global_image_path = os.path.join(input_path, "global.png")
 image = bpy.data.images.load(image_path)
+global_image = bpy.data.images.load(global_image_path)
 env_tex.image = image
 env_tex.image.colorspace_settings.name = 'Filmic sRGB'
 image.pack()
+global_image.pack()
 bpy.context.scene.render.film_transparent = True
 
 # Insert an object
-obj_path = os.path.join(input_path, "obj/scene.gltf")
-bpy.ops.import_scene.gltf(filepath=obj_path)
-selected_objects = bpy.context.selected_objects
-if not selected_objects:
-    raise RuntimeError("No objects found in the imported GLTF file.")
-imported_obj = selected_objects[0]
-imported_obj.location = insertion_points
-imported_obj.scale = Vector((0.05, 0.05, 0.05)) 
+insert_object = False
+if insert_object:
+    obj_path = os.path.join(input_path, "obj/scene.gltf")
+    bpy.ops.import_scene.gltf(filepath=obj_path)
+    selected_objects = bpy.context.selected_objects
+    if not selected_objects:
+        raise RuntimeError("No objects found in the imported GLTF file.")
+    imported_obj = selected_objects[0]
+    imported_obj.location = insertion_points
+    imported_obj.scale = Vector((0.05, 0.05, 0.05)) 
+else:
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.06)
+    bpy.ops.object.shade_smooth()
+
+    sphere = bpy.context.active_object
+    sphere.location = insertion_points
+    mat = bpy.data.materials.new(name="SphereMaterial")
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get('Principled BSDF')
+
+    bsdf.inputs['Metallic'].default_value = 1.0
+    bsdf.inputs['Roughness'].default_value = 0.194
+    bsdf.inputs['Base Color'].default_value = (1.0, 1.0, 1.0, 1.0)
+    sphere.data.materials.append(mat)
+
 
 # Render 
 scene = bpy.context.scene
@@ -139,11 +159,18 @@ bpy.ops.wm.save_as_mainfile(filepath=blend_path)
 
 print(f"Scene saved to {blend_path}")
 
+
 # Render result
-output_path = os.path.join(output_path, "result.png")
+output1_path = os.path.join(output_path, "result.png")
 scene.view_settings.view_transform = 'Standard'
 scene.render.image_settings.color_mode = 'RGBA'
 scene.render.image_settings.file_format = 'PNG'
-scene.render.filepath = output_path
+scene.render.filepath = output1_path
 bpy.ops.render.render(write_still=True)
-print(f"Result map saved to {output_path}")
+print(f"Result 1 saved to {output_path}")
+
+env_tex.image = global_image
+output2_path = os.path.join(output_path, "result2.png")
+scene.render.filepath = output2_path
+bpy.ops.render.render(write_still=True)
+print(f"Result 2 saved to {output_path}")
