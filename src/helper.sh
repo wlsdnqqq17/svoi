@@ -8,6 +8,9 @@ orig_y=$5
 width=$6
 height=$7
 folder_name=$8
+nx=$9
+ny=${10}
+nz=${11}
 
 python gen_fenv.py "$X" "$Y" "$Z" "$folder_name"
-python insert_object.py "$X" "$Y" "$Z" "$width" "$height" "$folder_name"
+python insert_object.py "$X" "$Y" "$Z" "$width" "$height" "$folder_name" "$nx" "$ny" "$nz"

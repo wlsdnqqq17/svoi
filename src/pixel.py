@@ -1,7 +1,9 @@
 import cv2
 import numpy as np
 import os
+import math
 import sys
+from mathutils import Vector, Matrix
 
 if len(sys.argv) != 2:
     print("Usage: python pixel.py <folder_name>")
@@ -38,6 +40,54 @@ def pixel_to_world(px, py, depth_map, K, c2w):
     world_pt = c2w @ cam_pt_h
     return world_pt[:3]
 
+def estimate_normal_from_depth(px, py, depth_map, K, c2w, window=11):
+    H, W = depth_map.shape
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+
+    us = range(max(0, px - window // 2), min(W, px + window // 2 + 1))
+    vs = range(max(0, py - window // 2), min(H, py + window // 2 + 1))
+    
+    points_world = []
+    for v in vs:
+        for u in us:
+            Z = float(depth_map[v, u])
+            if Z == 0:
+                continue
+            X_cam = (u - cx) * Z / fx
+            Y_cam = (v - cy) * Z / fy
+            P_cam = np.array([X_cam, Y_cam, Z, 1.0], dtype=np.float32)
+            P_world = c2w @ P_cam
+            points_world.append([P_world[2], -P_world[0], -P_world[1]])
+    if len(points_world) < 8:
+        raise ValueError("Not enough valid points to estimate normal")
+    P = np.array(points_world)
+    centroid = P.mean(axis=0, keepdims=True)
+    Q = P - centroid
+    _, _, Vt = np.linalg.svd(Q, full_matrices=False)
+    normal = Vt[-1]
+    normal /= np.linalg.norm(normal)
+
+    cam_pos = c2w[:3, 3]
+    if np.dot(normal, (centroid.squeeze() - cam_pos)) < 0:
+        normal = -normal
+
+    n_vec = Vector(normal.tolist())
+    z_axis = Vector((0, 0, 1))
+    if (z_axis - n_vec).length < 1e-6:
+        rot_mat = Matrix.Identity(3)
+    elif (z_axis + n_vec).length < 1e-6:
+        rot_mat = Matrix.Rotation(math.pi, 3, 'X')
+    else:
+        axis = z_axis.cross(n_vec).normalized()
+        angle = math.acos(max(-1.0, min(1.0, z_axis.dot(n_vec))))
+        rot_mat = Matrix.Rotation(angle, 3, axis)
+
+    euler_deg = tuple(math.degrees(a) for a in rot_mat.to_euler('XYZ'))
+
+    return euler_deg
+
+
 def click_event(event, x, y, flags, param):
     global clicked
     if clicked:
@@ -49,19 +99,26 @@ def click_event(event, x, y, flags, param):
         try:
             world_xyz = pixel_to_world(orig_x, orig_y, depth_map, K, c2w)
             Y, Z, X = world_xyz
-            Y =  - Y
+            Y = - Y
             Z = - Z
             print(f"Pixel ({orig_x},{orig_y}) → World: ({X:.3f}, {Y:.3f}, {Z:.3f})")
+            nx, ny, nz = estimate_normal_from_depth(orig_x, orig_y, depth_map, K, c2w)
+            print(f"Normal vector at pixel ({orig_x},{orig_y}): {nx:.3f}, {ny:.3f}, {nz:.3f}")
         except Exception as e:
             print(f"Error: {e}")
-            cv2.destroyAllWindows()
+            clicked = True
             return
 
         cv2.destroyAllWindows()
         cv2.waitKey(10)  
 
-        os.system(f'./helper.sh {X} {Y} {Z} {orig_x} {orig_y} {width} {height} {folder_name}')
+        os.system(f'./helper.sh {X} {Y} {Z} {orig_x} {orig_y} {width} {height} {folder_name} {nx} {ny} {nz}')
 
 cv2.imshow('Image', resized_image)
 cv2.setMouseCallback('Image', click_event)
-cv2.waitKey(0)
+while True:
+    key = cv2.waitKey(20) & 0xFF
+    if clicked or key in (27, ord('q')):
+        break
+
+cv2.destroyAllWindows()
