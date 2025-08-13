@@ -126,6 +126,9 @@ plane.rotation_euler = Euler((
     math.radians(ry),
     math.radians(rz)
 ), 'XYZ')
+plane.is_shadow_catcher = True
+plane.visible_glossy = False
+
 R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
 n_world = (R @ Vector((0, 0, 1))).normalized()
 radius = sphere.dimensions.x * 0.5
