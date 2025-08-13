@@ -50,7 +50,7 @@ cam.type = 'PERSP'
 cam.lens = fx * 36 / img_width
 cam.sensor_width = 36
 cam.shift_x = -(cx - img_width / 2) / img_width
-cam.shift_y = (cy - img_height / 2) / img_height
+cam.shift_y = (cx - img_width / 2) / img_width
 cam.clip_start = 0.01
 print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 
