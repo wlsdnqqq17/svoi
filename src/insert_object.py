@@ -3,7 +3,7 @@ import os
 import sys
 import math
 import numpy as np
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Vector, Euler
 
 folder_name = sys.argv[6]
 input_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
@@ -12,6 +12,7 @@ output_path = os.path.join("/Users/jinwoo/Documents/work/svoi/out", folder_name)
 img_width = int(sys.argv[4])
 img_height = int(sys.argv[5])
 insertion_points = Vector([float(x) for x in sys.argv[1:4]])
+rx, ry, rz = Vector([float(x) for x in sys.argv[7:10]])
 
 # Load camera intrinsics and pose
 K = np.load(os.path.join(input_path, "K.npy"))
@@ -20,13 +21,14 @@ fy = K[1][1]
 cx = K[0][2]
 cy = K[1][2]
 c2w = np.load(os.path.join(input_path, "c2w.npy"))
+depth_map = np.load(os.path.join(input_path, "depth_map.npy"))
 
 # Clear all objects
 for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
 # Add a camera
-cam_location = Vector(c2w[3][:-1])
+cam_location = Vector(c2w[:3, 3])
 look_dir = Vector((1, 0, 0))
 target = cam_location + look_dir
 
@@ -114,6 +116,23 @@ else:
     bsdf.inputs['Base Color'].default_value = (1.0, 1.0, 1.0, 1.0)
     sphere.data.materials.append(mat)
 
+# Insert Proxy plane
+bpy.ops.mesh.primitive_plane_add(size=0.2)
+plane = bpy.context.active_object
+plane.location = insertion_points
+plane.rotation_mode = 'XYZ'
+plane.rotation_euler = Euler((
+    math.radians(rx),
+    math.radians(ry),
+    math.radians(rz)
+), 'XYZ')
+plane.is_shadow_catcher = True
+plane.visible_glossy = False
+
+R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
+n_world = (R @ Vector((0, 0, 1))).normalized()
+radius = sphere.dimensions.x * 0.5
+sphere.location = plane.location - n_world * radius
 
 # Render 
 scene = bpy.context.scene
