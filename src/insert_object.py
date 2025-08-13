@@ -50,7 +50,7 @@ cam.type = 'PERSP'
 cam.lens = fx * 36 / img_width
 cam.sensor_width = 36
 cam.shift_x = -(cx - img_width / 2) / img_width
-cam.shift_y = (cy - img_height / 2) / img_height
+cam.shift_y = (cx - img_width / 2) / img_width
 cam.clip_start = 0.01
 print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 
@@ -78,12 +78,12 @@ links.new(env_tex.outputs['Color'], background.inputs['Color'])
 links.new(background.outputs['Background'], output.inputs['Surface'])
 
 # Load environment image
-image_path = os.path.join(output_path, "envmap.png")
-global_image_path = os.path.join(input_path, "global.png")
+image_path = os.path.join(output_path, "envmap.hdr")
+global_image_path = os.path.join(input_path, "global.hdr")
 image = bpy.data.images.load(image_path)
 global_image = bpy.data.images.load(global_image_path)
 env_tex.image = image
-env_tex.image.colorspace_settings.name = 'Filmic sRGB'
+env_tex.image.colorspace_settings.name = 'Non-Color'
 image.pack()
 global_image.pack()
 bpy.context.scene.render.film_transparent = True
