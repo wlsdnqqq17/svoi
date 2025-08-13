@@ -58,7 +58,15 @@ def estimate_normal_from_depth(px, py, depth_map, K, c2w, window=11):
             Y_cam = (v - cy) * Z / fy
             P_cam = np.array([X_cam, Y_cam, Z, 1.0], dtype=np.float32)
             P_world = c2w @ P_cam
-            points_world.append([P_world[2], -P_world[0], -P_world[1]])
+            # Convert from camera/world coordinates to Blender coordinates:
+            # Blender uses Z as up, Y as depth, X as right. Here, we map:
+            #   P_world[2] -> Z (up)
+            #   -P_world[0] -> X (right, negated)
+            #   -P_world[1] -> Y (forward, negated)
+            blender_x = -P_world[0]
+            blender_y = -P_world[1]
+            blender_z = P_world[2]
+            points_world.append([blender_z, blender_x, blender_y])
     if len(points_world) < 8:
         raise ValueError("Not enough valid points to estimate normal")
     P = np.array(points_world)
@@ -106,7 +114,7 @@ def click_event(event, x, y, flags, param):
             print(f"Normal vector at pixel ({orig_x},{orig_y}): {nx:.3f}, {ny:.3f}, {nz:.3f}")
         except Exception as e:
             print(f"Error: {e}")
-            clicked = True
+            # clicked = True
             return
 
         cv2.destroyAllWindows()
