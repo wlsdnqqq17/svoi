@@ -13,7 +13,7 @@ insertion_points = [float(x) for x in sys.argv[1:4]]
 base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
 glb_path = os.path.join(base_path, "full_scene.glb")
 gltf_path = os.path.join(base_path, "full_scene.gltf")
-image_path = os.path.join(base_path, "global.png")
+image_path = os.path.join(base_path, "global.hdr")
 
 
 print("Insertion points:", insertion_points)
@@ -68,7 +68,7 @@ try:
 except Exception as e:
     print("실패:", e)
 
-env_tex.image.colorspace_settings.name = 'Filmic sRGB'
+env_tex.image.colorspace_settings.name = 'Non-Color'
 
 mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
 
@@ -102,7 +102,7 @@ print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 
 # Save the scene as a blend file
 blend_path = os.path.join(os.path.dirname(bpy.data.filepath), "..", f"out/{folder_name}/making_envmap.blend")
-envmap_path = os.path.join(os.path.dirname(bpy.data.filepath), "..", f"out/{folder_name}/envmap.png")
+envmap_path = os.path.join(os.path.dirname(bpy.data.filepath), "..", f"out/{folder_name}/envmap.hdr")
 
 os.makedirs(os.path.dirname(blend_path), exist_ok=True)
 if os.path.exists(blend_path):
@@ -117,7 +117,11 @@ scene.render.resolution_x = 1024
 scene.render.resolution_y = 512
 scene.render.resolution_percentage = 100
 
-scene.render.image_settings.file_format = 'PNG'
+scene.render.image_settings.file_format = 'HDR'
+scene.render.image_settings.color_depth = '32'
+scene.view_settings.view_transform = 'Raw'
+
+
 scene.render.filepath = envmap_path
 bpy.ops.render.render(write_still=True)
-print(f"Environment map saved to {envmap_path}")
+print(f"HDR Environment map saved to {envmap_path}")
