@@ -3,7 +3,7 @@ import os
 import sys
 import math
 import numpy as np
-from mathutils import Matrix, Vector, Euler
+from mathutils import Vector, Euler
 
 folder_name = sys.argv[6]
 input_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
@@ -12,8 +12,7 @@ output_path = os.path.join("/Users/jinwoo/Documents/work/svoi/out", folder_name)
 img_width = int(sys.argv[4])
 img_height = int(sys.argv[5])
 insertion_points = Vector([float(x) for x in sys.argv[1:4]])
-rx, ry, rz = Vector([float(x) for x in sys.argv[7:10]])
-
+rx, ry, rz = [float(x) for x in sys.argv[7:10]]
 # Load camera intrinsics and pose
 K = np.load(os.path.join(input_path, "K.npy"))
 fx = K[0][0]
@@ -21,7 +20,6 @@ fy = K[1][1]
 cx = K[0][2]
 cy = K[1][2]
 c2w = np.load(os.path.join(input_path, "c2w.npy"))
-depth_map = np.load(os.path.join(input_path, "depth_map.npy"))
 
 # Clear all objects
 for obj in bpy.data.objects:
