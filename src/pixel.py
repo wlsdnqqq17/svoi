@@ -45,8 +45,8 @@ def estimate_normal_from_depth(px, py, depth_map, K, c2w, window=11):
     fx, fy = K[0, 0], K[1, 1]
     cx, cy = K[0, 2], K[1, 2]
 
-    us = range(max(0, px - window // 2), min(W, px + window // 2 + 1))
-    vs = range(max(0, py - window // 2), min(H, py + window // 2 + 1))
+    us = range(max(0, px - window // 2), min(W, px + window // 2 + 1), 3)
+    vs = range(max(0, py - window // 2), min(H, py + window // 2 + 1), 3)
     
     points_world = []
     for v in vs:
