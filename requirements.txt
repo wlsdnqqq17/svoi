@@ -1,0 +1,3 @@
+bpy
+opencv-python
+mathutils
