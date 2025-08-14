@@ -3,30 +3,8 @@ import numpy as np
 import os
 import math
 import sys
+import argparse
 from mathutils import Vector, Matrix
-
-if len(sys.argv) != 2:
-    print("Usage: python pixel.py <folder_name>")
-    sys.exit(1)
-
-folder_name = sys.argv[1]
-base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
-depth_path = os.path.join(base_path, "depth_map.npy")
-K_path = os.path.join(base_path, "K.npy")
-c2w_path = os.path.join(base_path, "c2w.npy")
-img_path = os.path.join(base_path, "input.jpg")
-
-depth_map = np.load(depth_path)
-K = np.load(K_path)
-c2w = np.load(c2w_path)
-image = cv2.imread(img_path)
-
-height, width = image.shape[:2]
-scale = 0.25
-resized_image = cv2.resize(image, None, fx=scale, fy=scale)
-
-
-clicked = False
 
 def pixel_to_world(px, py, depth_map, K, c2w):
     z = float(depth_map[py, px])
@@ -95,38 +73,75 @@ def estimate_normal_from_depth(px, py, depth_map, K, c2w, window=11):
 
     return euler_deg
 
+def run_for_pixel(orig_x, orig_y, depth_map, K, c2w, width, height, folder_name):
+    world_xyz = pixel_to_world(orig_x, orig_y, depth_map, K, c2w)
+    Y, Z, X = world_xyz
+    Y = -Y
+    Z = -Z
+    print(f"Pixel ({orig_x},{orig_y}) → World: ({X:.3f}, {Y:.3f}, {Z:.3f})")
 
-def click_event(event, x, y, flags, param):
-    global clicked
-    if clicked:
+    nx, ny, nz = estimate_normal_from_depth(orig_x, orig_y, depth_map, K, c2w)
+    print(f"Normal vector at pixel ({orig_x},{orig_y}): {nx:.3f}, {ny:.3f}, {nz:.3f}")
+
+    os.system(f'./helper.sh {X} {Y} {Z} {orig_x} {orig_y} {width} {height} {folder_name} {nx} {ny} {nz}')
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('folder_name', type=str, help='Name of the folder containing input files')
+    parser.add_argument('--px', type=int, default=None, help='Pixel(image) x-coordinate')
+    parser.add_argument('--py', type=int, default=None, help='Pixel(image) y-coordinate')
+    parser.add_argument("--scale", type=float, default=0.25, help="preview scale for GUI")
+    args = parser.parse_args()
+
+    base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", args.folder_name)
+    depth_path = os.path.join(base_path, "depth_map.npy")
+    K_path = os.path.join(base_path, "K.npy")
+    c2w_path = os.path.join(base_path, "c2w.npy")
+    img_path = os.path.join(base_path, "input.jpg")
+
+    depth_map = np.load(depth_path)
+    K = np.load(K_path)
+    c2w = np.load(c2w_path)
+    image = cv2.imread(img_path)
+    if image is None:
+        raise FileNotFoundError(f"Image file not found at {img_path}")
+    
+    H, W = depth_map.shape
+    height, width = image.shape[:2]
+
+    if args.px is not None and args.py is not None:
+        if not (0 <= args.px < width and 0 <= args.py < height):
+            raise ValueError(f"Pixel coordinates ({args.px}, {args.py}) are out of bounds for image size ({width}, {height})")
+        if depth_map[args.py, args.px] == 0:
+            raise ValueError(f"Depth at pixel ({args.px}, {args.py}) is zero")
+        run_for_pixel(args.px, args.py, depth_map, K, c2w, width, height, args.folder_name)
         return
-    if event == cv2.EVENT_LBUTTONDOWN:
-        clicked = True
-        orig_x = int(x / scale)
-        orig_y = int(y / scale)
-        try:
-            world_xyz = pixel_to_world(orig_x, orig_y, depth_map, K, c2w)
-            Y, Z, X = world_xyz
-            Y = - Y
-            Z = - Z
-            print(f"Pixel ({orig_x},{orig_y}) → World: ({X:.3f}, {Y:.3f}, {Z:.3f})")
-            nx, ny, nz = estimate_normal_from_depth(orig_x, orig_y, depth_map, K, c2w)
-            print(f"Normal vector at pixel ({orig_x},{orig_y}): {nx:.3f}, {ny:.3f}, {nz:.3f}")
-        except Exception as e:
-            print(f"Error: {e}")
-            # clicked = True
+    
+    scale = args.scale
+    resized_image = cv2.resize(image, None, fx=scale, fy=scale)
+    clicked = {"done": False}
+
+    def click_event(event, x, y, flags, param):
+        if clicked["done"]:
             return
+        if event == cv2.EVENT_LBUTTONDOWN:
+            clicked["done"] = True
+            orig_x = int(x / scale)
+            orig_y = int(y / scale)
+            try:
+                run_for_pixel(orig_x, orig_y, depth_map, K, c2w, width, height, args.folder_name)
+            except Exception as e:
+                print(f"Error: {e}")
+            finally:
+                cv2.destroyAllWindows()
 
-        cv2.destroyAllWindows()
-        cv2.waitKey(10)  
+    cv2.imshow('Image', resized_image)
+    cv2.setMouseCallback('Image', click_event)
+    while True:
+        key = cv2.waitKey(20) & 0xFF
+        if clicked["done"] or key in (27, ord('q')):
+            break
+    cv2.destroyAllWindows()
 
-        os.system(f'./helper.sh {X} {Y} {Z} {orig_x} {orig_y} {width} {height} {folder_name} {nx} {ny} {nz}')
-
-cv2.imshow('Image', resized_image)
-cv2.setMouseCallback('Image', click_event)
-while True:
-    key = cv2.waitKey(20) & 0xFF
-    if clicked or key in (27, ord('q')):
-        break
-
-cv2.destroyAllWindows()
+if __name__ == "__main__":
+    main()

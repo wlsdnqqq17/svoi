@@ -100,7 +100,7 @@ if insert_object:
     imported_obj.location = insertion_points
     imported_obj.scale = Vector((0.05, 0.05, 0.05)) 
 else:
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.06)
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.052)
     bpy.ops.object.shade_smooth()
 
     sphere = bpy.context.active_object

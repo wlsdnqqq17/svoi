@@ -78,7 +78,7 @@ mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
 cam_location = Vector(insertion_points[:3])
 R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
 n_world = (R @ Vector((0, 0, 1))).normalized()
-radius = 0.06
+radius = 0.052
 cam_location = cam_location - n_world * radius
 
 look_dir = Vector((-1, 0, 0))
