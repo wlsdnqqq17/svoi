@@ -1,15 +1,16 @@
 import bpy
 import os
-from mathutils import Quaternion, Vector
+from mathutils import Quaternion, Vector, Euler
 import math
 import sys
 
-if len(sys.argv) != 5:
+if len(sys.argv) != 8:
     print("Usage: python gen_fenv.py <insertion_x> <insertion_y> <insertion_z> <folder_name>")
     sys.exit(1)
 
 folder_name = sys.argv[4]
 insertion_points = [float(x) for x in sys.argv[1:4]]
+rx, ry, rz = [float(x) for x in sys.argv[5:8]]
 base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
 glb_path = os.path.join(base_path, "full_scene.glb")
 gltf_path = os.path.join(base_path, "full_scene.gltf")
@@ -26,7 +27,7 @@ bpy.ops.import_scene.gltf(filepath=gltf_path)
 
 q_rot = Quaternion((0, -1, 1, 0))
 
-# 회전
+# Rotate all mesh objects
 for obj in bpy.data.objects:
     if obj.type == 'MESH':
         obj.rotation_mode = 'QUATERNION'
@@ -37,23 +38,25 @@ world.use_nodes = True
 nodes = world.node_tree.nodes
 links = world.node_tree.links
 
-# 노드 전부 삭제
+# Remove existing nodes
 for node in nodes:
     nodes.remove(node)
 
-# 노드 생성
+# Generate new nodes for the environment map
 tex_coord = nodes.new(type='ShaderNodeTexCoord')
 mapping = nodes.new(type='ShaderNodeMapping')
 env_tex = nodes.new(type='ShaderNodeTexEnvironment')
 background = nodes.new(type='ShaderNodeBackground')
 output = nodes.new(type='ShaderNodeOutputWorld')
 
+# Set node properties
 tex_coord.location = (-800, 0)
 mapping.location = (-600, 0)
 env_tex.location = (-400, 0)
 background.location = (-200, 0)
 output.location = (0, 0)
 
+# Link the nodes
 links.new(tex_coord.outputs['Generated'], mapping.inputs['Vector'])
 links.new(mapping.outputs['Vector'], env_tex.inputs['Vector'])
 links.new(env_tex.outputs['Color'], background.inputs['Color'])
@@ -64,18 +67,19 @@ try:
     image = bpy.data.images.load(image_path)
     env_tex.image = image
     image.pack()
-    print("성공:", image.name)
+    print("Success:", image.name)
 except Exception as e:
-    print("실패:", e)
+    print("Fail:", e)
 
 env_tex.image.colorspace_settings.name = 'Non-Color'
-
 mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
 
 # Add a camera
 cam_location = Vector(insertion_points[:3])
-cam_location.z += 0.05
-cam_location.x -= 0.05
+R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
+n_world = (R @ Vector((0, 0, 1))).normalized()
+radius = 0.06
+cam_location = cam_location - n_world * radius
 
 look_dir = Vector((-1, 0, 0))
 target = cam_location + look_dir
