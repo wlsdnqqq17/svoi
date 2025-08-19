@@ -14,7 +14,7 @@ rx, ry, rz = [float(x) for x in sys.argv[5:8]]
 base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
 glb_path = os.path.join(base_path, "full_scene.glb")
 gltf_path = os.path.join(base_path, "full_scene.gltf")
-image_path = os.path.join(base_path, "global.hdr")
+image_path = os.path.join(base_path, "global.png")
 
 
 print("Insertion points:", insertion_points)
@@ -30,6 +30,10 @@ q_rot = Quaternion((0, -1, 1, 0))
 # Rotate all mesh objects
 for obj in bpy.data.objects:
     if obj.type == 'MESH':
+        if obj.name == "geometry_0":
+            obj.hide_viewport = True
+            obj.hide_render = True
+            continue
         obj.rotation_mode = 'QUATERNION'
         obj.rotation_quaternion = q_rot @ obj.rotation_quaternion
 
@@ -71,7 +75,7 @@ try:
 except Exception as e:
     print("Fail:", e)
 
-env_tex.image.colorspace_settings.name = 'Non-Color'
+env_tex.image.colorspace_settings.name = 'sRGB'
 mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
 
 # Add a camera
