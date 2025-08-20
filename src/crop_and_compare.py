@@ -62,13 +62,13 @@ img2_bbox = find_non_transparent_bbox(img2)
 img3_bbox = find_non_transparent_bbox(img3)
 
 if any(bbox is None for bbox in [gt_bbox, img1_bbox, img2_bbox, img3_bbox]):
-    print("일부 이미지에서 투명하지 않은 부분을 찾을 수 없습니다!")
+    print("No non-transparent parts found in some images!")
     exit(1)
 
-print(f"GT: x={gt_bbox[0]}:{gt_bbox[2]}, y={gt_bbox[1]}:{gt_bbox[3]} -> 크기: {gt_bbox[2]-gt_bbox[0]+1} x {gt_bbox[3]-gt_bbox[1]+1}")
-print(f"Image 1: x={img1_bbox[0]}:{img1_bbox[2]}, y={img1_bbox[1]}:{img1_bbox[3]} -> 크기: {img1_bbox[2]-img1_bbox[0]+1} x {img1_bbox[3]-img1_bbox[1]+1}")
-print(f"Image 2: x={img2_bbox[0]}:{img2_bbox[2]}, y={img2_bbox[1]}:{img2_bbox[3]} -> 크기: {img2_bbox[2]-img2_bbox[0]+1} x {img2_bbox[3]-img2_bbox[1]+1}")
-print(f"Image 3: x={img3_bbox[0]}:{img3_bbox[2]}, y={img3_bbox[1]}:{img3_bbox[3]} -> 크기: {img3_bbox[2]-img3_bbox[0]+1} x {img3_bbox[3]-img3_bbox[1]+1}")
+print(f"GT: x={gt_bbox[0]}:{gt_bbox[2]}, y={gt_bbox[1]}:{gt_bbox[3]} -> size: {gt_bbox[2]-gt_bbox[0]+1} x {gt_bbox[3]-gt_bbox[1]+1}")
+print(f"Image 1: x={img1_bbox[0]}:{img1_bbox[2]}, y={img1_bbox[1]}:{img1_bbox[3]} -> size: {img1_bbox[2]-img1_bbox[0]+1} x {img1_bbox[3]-img1_bbox[1]+1}")
+print(f"Image 2: x={img2_bbox[0]}:{img2_bbox[2]}, y={img2_bbox[1]}:{img2_bbox[3]} -> size: {img2_bbox[2]-img2_bbox[0]+1} x {img2_bbox[3]-img2_bbox[1]+1}")
+print(f"Image 3: x={img3_bbox[0]}:{img3_bbox[2]}, y={img3_bbox[1]}:{img3_bbox[3]} -> size: {img3_bbox[2]-img3_bbox[0]+1} x {img3_bbox[3]-img3_bbox[1]+1}")
 print()
 
 gt_cropped = crop_image(gt, gt_bbox)
