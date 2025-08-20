@@ -14,6 +14,7 @@ rx, ry, rz = [float(x) for x in sys.argv[5:8]]
 base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
 glb_path = os.path.join(base_path, "full_scene.glb")
 gltf_path = os.path.join(base_path, "full_scene.gltf")
+# image_path = os.path.join(base_path, "global.hdr")
 image_path = os.path.join(base_path, "global.png")
 
 
@@ -76,6 +77,7 @@ except Exception as e:
     print("Fail:", e)
 
 env_tex.image.colorspace_settings.name = 'sRGB'
+# env_tex.image.colorspace_settings.name = 'Non-Color'
 mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
 
 # Add a camera
@@ -109,8 +111,9 @@ cam.clip_start = 0.01
 print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 
 # Save the scene as a blend file
-blend_path = os.path.join(os.path.dirname(bpy.data.filepath), "..", f"out/{folder_name}/making_envmap.blend")
-envmap_path = os.path.join(os.path.dirname(bpy.data.filepath), "..", f"out/{folder_name}/envmap.hdr")
+output_dir = f"/Users/jinwoo/Documents/work/svoi/out/{folder_name}"
+blend_path = os.path.join(output_dir, "making_envmap.blend")
+envmap_path = os.path.join(output_dir, "envmap.hdr")
 
 os.makedirs(os.path.dirname(blend_path), exist_ok=True)
 if os.path.exists(blend_path):
