@@ -114,6 +114,32 @@ else:
     bsdf.inputs['Base Color'].default_value = (1.0, 1.0, 1.0, 1.0)
     sphere.data.materials.append(mat)
 
+R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
+n_world = (R @ Vector((0, 0, 1))).normalized()
+radius = sphere.dimensions.x * 0.5
+sphere.location = insertion_points - n_world * radius
+
+# Render 
+scene = bpy.context.scene
+scene.render.resolution_x = img_width
+scene.render.resolution_y = img_height
+scene.render.resolution_percentage = 100
+
+# Render result
+output1_path = os.path.join(output_path, "result_object.png")
+scene.view_settings.view_transform = 'Standard'
+scene.render.image_settings.color_mode = 'RGBA'
+scene.render.image_settings.file_format = 'PNG'
+scene.render.filepath = output1_path
+bpy.ops.render.render(write_still=True)
+print(f"Result 1 saved to {output_path}")
+
+env_tex.image = global_image
+output2_path = os.path.join(output_path, "result_object2.png")
+scene.render.filepath = output2_path
+bpy.ops.render.render(write_still=True)
+print(f"Result 2 saved to {output_path}")
+
 # Insert Proxy plane
 bpy.ops.mesh.primitive_plane_add(size=0.2)
 plane = bpy.context.active_object
@@ -124,20 +150,9 @@ plane.rotation_euler = Euler((
     math.radians(ry),
     math.radians(rz)
 ), 'XYZ')
-plane.is_shadow_catcher = True
+
 plane.visible_glossy = False
-
-R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
-n_world = (R @ Vector((0, 0, 1))).normalized()
-radius = sphere.dimensions.x * 0.5
-sphere.location = plane.location - n_world * radius
-
-# Render 
-scene = bpy.context.scene
-scene.render.resolution_x = img_width
-scene.render.resolution_y = img_height
-scene.render.resolution_percentage = 100
-
+plane.is_shadow_catcher = True
 scene.use_nodes = True
 tree = scene.node_tree
 nodes = tree.nodes
