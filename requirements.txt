@@ -1,3 +1,4 @@
 bpy
 opencv-python
 mathutils
+objaverse
