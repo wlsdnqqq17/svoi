@@ -6,9 +6,9 @@ import gzip
 import json
 from pathlib import Path
 
-
-download_dir = Path("/Users/jinwoo/Documents/work/svoi/dataset")
-raw_dir = download_dir / "hf-objaverse-v1"
+root_dir = Path("/Users/jinwoo/Documents/work/svoi")
+download_dir = root_dir / "dataset" / "001"
+raw_dir = root_dir / "dataset_legacy" / "hf-objaverse-v1"
 os.makedirs(download_dir, exist_ok=True)
 objaverse.BASE_PATH = download_dir
 objaverse._VERSIONED_PATH = raw_dir
