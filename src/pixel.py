@@ -83,7 +83,7 @@ def run_for_pixel(orig_x, orig_y, depth_map, K, c2w, width, height, folder_name)
     nx, ny, nz = estimate_normal_from_depth(orig_x, orig_y, depth_map, K, c2w)
     print(f"Normal vector at pixel ({orig_x},{orig_y}): {nx:.3f}, {ny:.3f}, {nz:.3f}")
 
-    os.system(f'./helper.sh {X} {Y} {Z} {orig_x} {orig_y} {width} {height} {folder_name} {nx} {ny} {nz}')
+    os.system(f'src/helper.sh {X} {Y} {Z} {orig_x} {orig_y} {width} {height} {folder_name} {nx} {ny} {nz}')
 
 def main():
     parser = argparse.ArgumentParser()
