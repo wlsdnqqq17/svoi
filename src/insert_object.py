@@ -193,6 +193,7 @@ print(f"Scene saved to {blend_path}")
 
 
 # Render result
+env_tex.image = image
 output1_path = os.path.join(output_path, "result.png")
 scene.view_settings.view_transform = 'Standard'
 scene.render.image_settings.color_mode = 'RGBA'
