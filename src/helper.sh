@@ -12,5 +12,5 @@ nx=$9
 ny=${10}
 nz=${11}
 
-python gen_fenv.py "$X" "$Y" "$Z" "$folder_name" "$nx" "$ny" "$nz"
-python insert_object.py "$X" "$Y" "$Z" "$width" "$height" "$folder_name" "$nx" "$ny" "$nz"
+python src/gen_fenv.py "$X" "$Y" "$Z" "$folder_name" "$nx" "$ny" "$nz"
+python src/insert_object.py "$X" "$Y" "$Z" "$width" "$height" "$folder_name" "$nx" "$ny" "$nz"
