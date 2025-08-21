@@ -31,12 +31,12 @@ q_rot = Quaternion((0, -1, 1, 0))
 # Rotate all mesh objects
 for obj in bpy.data.objects:
     if obj.type == 'MESH':
+        obj.rotation_mode = 'QUATERNION'
+        obj.rotation_quaternion = q_rot @ obj.rotation_quaternion
         if obj.name == "geometry_0":
             obj.hide_viewport = True
             obj.hide_render = True
             continue
-        obj.rotation_mode = 'QUATERNION'
-        obj.rotation_quaternion = q_rot @ obj.rotation_quaternion
 
 world = bpy.context.scene.world
 world.use_nodes = True
