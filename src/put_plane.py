@@ -3,6 +3,7 @@ import os
 import random
 import sys
 import math
+import glob
 from mathutils import Vector, Euler
 
 if len(sys.argv) > 1:
@@ -10,23 +11,30 @@ if len(sys.argv) > 1:
 else:
     dir_name = "001"
 
-tex_dir = f"dataset/{dir_name}/abstract_1-4K" 
-name = "4K-abstract_1"
+tex_dir = f"dataset/{dir_name}/textures" 
 
 for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
-color_path = os.path.join(tex_dir, f"{name}-diffuse.jpg")
-roughness_path = os.path.join(tex_dir, f"{name}-specular.jpg")
-normal_path = os.path.join(tex_dir, f"{name}-normal.jpg")
+# 동적으로 텍스처 파일 찾기
+def find_texture_file(tex_dir, dir_name, texture_type):
+    pattern = os.path.join(tex_dir, f"{dir_name}-{texture_type}.*")
+    matches = glob.glob(pattern)
+    if matches:
+        return matches[0]  # 첫 번째 매치된 파일 반환
+    else:
+        raise FileNotFoundError(f"No texture file found for pattern: {pattern}")
+
+color_path = find_texture_file(tex_dir, dir_name, "diff")
+roughness_path = find_texture_file(tex_dir, dir_name, "rou") 
+normal_path = find_texture_file(tex_dir, dir_name, "nor")
 
 bpy.ops.mesh.primitive_plane_add(size=5, location=(0, 0, 0))
 plane = bpy.context.active_object
-plane.name = "AbstractPlane"
+plane.name = "Plane"
 plane_size = plane.dimensions.xy 
 
-
-mat = bpy.data.materials.new(name="Abstract_Material")
+mat = bpy.data.materials.new(name="Plane_Material")
 mat.use_nodes = True
 nodes = mat.node_tree.nodes
 links = mat.node_tree.links
@@ -140,6 +148,10 @@ def create_primitive_object(primitive_type, location=(0, 0, 0)):
     else:
         obj.data.materials[0] = mat
     
+    # Smooth shading 적용 (부드러운 표면)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.shade_smooth()
+    
     return obj
 
 # GLB 파일들과 primitive 객체들을 섞어서 배치할 리스트 생성
@@ -166,7 +178,8 @@ for _ in range(num_primitives):
 # 리스트 섞기
 random.shuffle(all_objects)
 
-TARGET_MAX_DIM = 1.0
+TARGET_MAX_DIM_GLB = 1.0      # GLB 파일용 크기
+TARGET_MAX_DIM_PRIMITIVE = 0.6  # primitive 객체용 크기
 PLANE_SIZE = 5.0  # 평면 크기
 SAFE_MARGIN = 0.3  # 평면 가장자리에서 안전 여백
 
@@ -233,7 +246,13 @@ for i, (obj_type, obj_data) in enumerate(all_objects):
         else:
             current_dim = max(parent_object.dimensions.x, parent_object.dimensions.y, parent_object.dimensions.z)
         
-        scale_factor = TARGET_MAX_DIM / current_dim if current_dim > 0 else 1.0
+        # 객체 타입에 따라 다른 크기 적용
+        if obj_type == 'glb':
+            target_dim = TARGET_MAX_DIM_GLB
+        else:  # primitive
+            target_dim = TARGET_MAX_DIM_PRIMITIVE
+        
+        scale_factor = target_dim / current_dim if current_dim > 0 else 1.0
         
         parent_object.scale = (scale_factor, scale_factor, scale_factor)
         
@@ -253,7 +272,8 @@ for i, (obj_type, obj_data) in enumerate(all_objects):
             
             # 기존 객체들과 거리 확인
             too_close = False
-            min_distance = TARGET_MAX_DIM * 0.8  # 최소 거리 증가
+            current_target = TARGET_MAX_DIM_GLB if obj_type == 'glb' else TARGET_MAX_DIM_PRIMITIVE
+            min_distance = current_target * 0.8  # 최소 거리
             
             for prev_x, prev_y in placed_positions:
                 distance = math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2)
@@ -264,7 +284,7 @@ for i, (obj_type, obj_data) in enumerate(all_objects):
             if not too_close:
                 # bounding box가 평면 밖으로 나가지 않는지 확인
                 # 객체의 스케일된 크기 고려
-                obj_radius = TARGET_MAX_DIM * 0.5  # 객체의 반지름 (대략적)
+                obj_radius = current_target * 0.5  # 객체의 반지름 (대략적)
                 if (abs(x_pos) + obj_radius <= PLANE_SIZE/2 - SAFE_MARGIN and 
                     abs(y_pos) + obj_radius <= PLANE_SIZE/2 - SAFE_MARGIN):
                     break
@@ -332,9 +352,11 @@ world_output.location = (300, 0)
 env_tex = world_nodes.new(type='ShaderNodeTexEnvironment')
 env_tex.location = (0, 0)
 
-# Environment Texture 이미지 로드 (HDR 파일)
-env_image_path = f"dataset/{dir_name}/envmap.hdr"
-if os.path.exists(env_image_path):
+# Environment Texture 이미지 로드 (동적으로 확장자 찾기)
+envmap_pattern = os.path.join(f"dataset/{dir_name}", "envmap.*")
+envmap_matches = glob.glob(envmap_pattern)
+if envmap_matches:
+    env_image_path = envmap_matches[0]
     env_tex.image = bpy.data.images.load(env_image_path)
     print(f"World environment map loaded: {env_image_path}")
     # Environment Texture을 World Output에 연결
@@ -345,17 +367,188 @@ if os.path.exists(env_image_path):
         env_tex.image.pack()
         print(f"Environment map packed: {env_image_path}")
 else:
-    raise FileNotFoundError(f"Environment map not found: {env_image_path}")
+    raise FileNotFoundError(f"Environment map not found in dataset/{dir_name}/")
 
 # World 강도 조정 (현재 Blender 버전에서는 기본 설정 사용)
 
 # 렌더 엔진을 Cycles로 설정
 bpy.context.scene.render.engine = 'CYCLES'
 
-# 뷰포트 샘플링 설정
-bpy.context.scene.cycles.preview_samples = 64
+# 렌더 샘플링 설정 (빠른 테스트용)
+bpy.context.scene.cycles.samples = 64  # 렌더 샘플 (매우 빠른 테스트)
+bpy.context.scene.cycles.preview_samples = 64  # 뷰포트 샘플
 
-print("Render engine set to Cycles with viewport samples: 64")
+print("Render engine set to Cycles with CPU rendering and 256 samples")
+
+# 모든 객체의 바운딩 박스 계산
+def calculate_scene_bounds():
+    min_x = min_y = min_z = float('inf')
+    max_x = max_y = max_z = float('-inf')
+    
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and obj.name != 'Plane':
+            # 월드 스페이스 바운딩 박스 계산
+            bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+            for corner in bbox_corners:
+                min_x = min(min_x, corner.x)
+                min_y = min(min_y, corner.y)
+                min_z = min(min_z, corner.z)
+                max_x = max(max_x, corner.x)
+                max_y = max(max_y, corner.y)
+                max_z = max(max_z, corner.z)
+    
+    center = Vector(((min_x + max_x) / 2, (min_y + max_y) / 2, (min_z + max_z) / 2))
+    size = Vector((max_x - min_x, max_y - min_y, max_z - min_z))
+    return center, size
+
+# 카메라 추가 및 설정
+def setup_camera_and_render(center, size, camera_name, position_offset, render_filename):
+    # 카메라 추가
+    bpy.ops.object.camera_add()
+    camera = bpy.context.active_object
+    camera.name = camera_name
+    
+    # 씬의 크기에 따라 카메라 거리 계산 (더욱 가깝게)
+    max_dim = max(size.x, size.y, size.z)
+    camera_distance = max_dim * 0.9  # 더욱 가까운 거리로 조정
+    
+    # 카메라 위치 설정
+    camera.location = center + Vector(position_offset) * camera_distance
+    
+    # 카메라가 중심점을 바라보도록 설정
+    direction = center - camera.location
+    camera.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+    
+    # 카메라를 씬의 활성 카메라로 설정
+    bpy.context.scene.camera = camera
+    
+    # 렌더 설정 (1920x1080)
+    bpy.context.scene.render.resolution_x = 1920
+    bpy.context.scene.render.resolution_y = 1080
+    bpy.context.scene.render.filepath = os.path.join(f"dataset/{dir_name}", render_filename)
+    
+    # 렌더 실행
+    bpy.ops.render.render(write_still=True)
+    print(f"Rendered: {render_filename} from {camera_name}")
+    
+    return camera
+
+# 씬 바운드 계산
+center, size = calculate_scene_bounds()
+print(f"Scene center: {center}, Scene size: {size}")
+
+# 다양한 대각선 각도 정의
+diagonal_angles = [
+    (1.5, 1.5, 1.2),    # 기본 대각선
+    (-1.5, 1.5, 1.2),   # 왼쪽 대각선
+    (1.5, -1.5, 1.2),   # 오른쪽 대각선
+    (-1.5, -1.5, 1.2),  # 뒤쪽 대각선
+    (2.0, 1.0, 1.5),    # 높은 각도1
+    (-2.0, 1.0, 1.5),   # 높은 각도2
+    (1.0, 2.0, 1.5),    # 높은 각도3
+    (-1.0, -2.0, 1.5),  # 높은 각도4
+    (1.8, 0.8, 0.8),    # 낮은 각도1
+    (-1.8, 0.8, 0.8),   # 낮은 각도2
+    (0.8, 1.8, 0.8),    # 낮은 각도3
+    (-0.8, -1.8, 0.8),  # 낮은 각도4
+]
+
+# 랜덤으로 대각선 각도 선택
+selected_angle = random.choice(diagonal_angles)
+
+# 1. 먼저 기본 씬 렌더링 (메탈릭 구체 없음)
+camera = setup_camera_and_render(center, size, "Camera_Diagonal", selected_angle, f"{dir_name}_before.png")
+print(f"Rendered base scene: {dir_name}_before.png")
+
+# 2. 메탈릭 구체 추가
+def add_metallic_sphere(center, size, placed_positions):
+    # 구체 생성
+    bpy.ops.mesh.primitive_uv_sphere_add(location=(0, 0, 0))
+    sphere = bpy.context.active_object
+    sphere.name = "metallic_sphere"
+    
+    # 크기 설정 (적당한 크기)
+    sphere_scale = 0.3
+    sphere.scale = (sphere_scale, sphere_scale, sphere_scale)
+    
+    # 메탈릭 머티리얼 생성
+    mat = bpy.data.materials.new(name="Metallic_Material")
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    
+    # 기존 노드 제거
+    for node in nodes:
+        nodes.remove(node)
+    
+    # Principled BSDF 노드 추가
+    bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
+    bsdf.location = (0, 0)
+    
+    # Output 노드 추가
+    output = nodes.new(type='ShaderNodeOutputMaterial')
+    output.location = (200, 0)
+    
+    # 메탈릭 설정 (완전 메탈릭, 크롬 같은 색상)
+    bsdf.inputs['Base Color'].default_value = (0.8, 0.8, 0.9, 1.0)  # 살짝 파란빛 실버
+    bsdf.inputs['Metallic'].default_value = 1.0  # 완전 메탈릭
+    bsdf.inputs['Roughness'].default_value = 0.1  # 거의 거울 같음
+    
+    # 노드 연결
+    links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+    
+    # 머티리얼 적용
+    if len(sphere.data.materials) == 0:
+        sphere.data.materials.append(mat)
+    else:
+        sphere.data.materials[0] = mat
+    
+    # Smooth shading 적용
+    bpy.context.view_layer.objects.active = sphere
+    bpy.ops.object.shade_smooth()
+    
+    # 겹치지 않는 랜덤 위치 찾기
+    max_attempts = 50
+    for attempt in range(max_attempts):
+        # 평면 범위 내에서 랜덤 위치 생성
+        x_pos = random.uniform(-PLANE_SIZE/2 + SAFE_MARGIN, PLANE_SIZE/2 - SAFE_MARGIN)
+        y_pos = random.uniform(-PLANE_SIZE/2 + SAFE_MARGIN, PLANE_SIZE/2 - SAFE_MARGIN)
+        
+        # 기존 객체들과 거리 확인
+        too_close = False
+        min_distance = sphere_scale * 2.0  # 구체 지름만큼 최소 거리
+        
+        for prev_x, prev_y in placed_positions:
+            distance = math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2)
+            if distance < min_distance:
+                too_close = True
+                break
+        
+        if not too_close:
+            # 평면 경계 확인
+            if (abs(x_pos) + sphere_scale <= PLANE_SIZE/2 - SAFE_MARGIN and 
+                abs(y_pos) + sphere_scale <= PLANE_SIZE/2 - SAFE_MARGIN):
+                break
+    
+    # 평면 높이 계산
+    plane = bpy.data.objects['Plane']
+    plane_height = plane.location.z + (plane.dimensions.z / 2)
+    
+    # 구체를 평면 위에 배치 (구체 바닥이 평면에 닿도록)
+    sphere.location = (x_pos, y_pos, plane_height + sphere_scale)
+    
+    print(f"Metallic sphere added at position: ({x_pos:.2f}, {y_pos:.2f}, {sphere.location.z:.2f})")
+    return sphere
+
+# 메탈릭 구체 추가
+metallic_sphere = add_metallic_sphere(center, size, placed_positions)
+
+# 3. 메탈릭 구체가 있는 씬 렌더링
+camera = setup_camera_and_render(center, size, "Camera_Diagonal", selected_angle, f"{dir_name}_after.png")
+print(f"Rendered scene with metallic sphere: {dir_name}_after.png")
+
+print(f"Selected diagonal angle: {selected_angle}")
+print("Object insertion dataset completed!")
 
 blend_path = os.path.join(f"dataset/{dir_name}", f"{dir_name}.blend")
 if os.path.exists(blend_path):
