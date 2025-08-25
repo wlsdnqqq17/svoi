@@ -15,7 +15,11 @@ base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
 glb_path = os.path.join(base_path, "full_scene.glb")
 gltf_path = os.path.join(base_path, "full_scene.gltf")
 # image_path = os.path.join(base_path, "global.hdr")
-image_path = os.path.join(base_path, "global.png")
+# image_path = os.path.join(base_path, "global.png")  # No longer needed for white env
+
+# Use gltf if available, otherwise use glb
+import_path = gltf_path if os.path.exists(gltf_path) else glb_path
+print(f"Loading 3D scene from: {import_path}")
 
 
 print("Insertion points:", insertion_points)
@@ -23,8 +27,8 @@ print("Insertion points:", insertion_points)
 for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
-# Load the glb file
-bpy.ops.import_scene.gltf(filepath=gltf_path)
+# Load the scene file
+bpy.ops.import_scene.gltf(filepath=import_path)
 
 q_rot = Quaternion((0, -1, 1, 0))
 
@@ -33,10 +37,10 @@ for obj in bpy.data.objects:
     if obj.type == 'MESH':
         obj.rotation_mode = 'QUATERNION'
         obj.rotation_quaternion = q_rot @ obj.rotation_quaternion
-        if obj.name == "geometry_0":
-            obj.hide_viewport = True
-            obj.hide_render = True
-            continue
+        # if obj.name == "geometry_0":
+        #     obj.hide_viewport = True
+        #     obj.hide_render = True
+        #     continue
 
 world = bpy.context.scene.world
 world.use_nodes = True
@@ -47,38 +51,22 @@ links = world.node_tree.links
 for node in nodes:
     nodes.remove(node)
 
-# Generate new nodes for the environment map
-tex_coord = nodes.new(type='ShaderNodeTexCoord')
-mapping = nodes.new(type='ShaderNodeMapping')
-env_tex = nodes.new(type='ShaderNodeTexEnvironment')
+# Generate new nodes for pure white environment
 background = nodes.new(type='ShaderNodeBackground')
 output = nodes.new(type='ShaderNodeOutputWorld')
 
 # Set node properties
-tex_coord.location = (-800, 0)
-mapping.location = (-600, 0)
-env_tex.location = (-400, 0)
 background.location = (-200, 0)
 output.location = (0, 0)
 
+# Set background to pure white with high strength for brightness
+background.inputs['Color'].default_value = (1.0, 1.0, 1.0, 1.0)  # Pure white
+background.inputs['Strength'].default_value = 1.0  # Full strength
+
 # Link the nodes
-links.new(tex_coord.outputs['Generated'], mapping.inputs['Vector'])
-links.new(mapping.outputs['Vector'], env_tex.inputs['Vector'])
-links.new(env_tex.outputs['Color'], background.inputs['Color'])
 links.new(background.outputs['Background'], output.inputs['Surface'])
 
-blend_dir = os.path.dirname(bpy.data.filepath)
-try:
-    image = bpy.data.images.load(image_path)
-    env_tex.image = image
-    image.pack()
-    print("Success:", image.name)
-except Exception as e:
-    print("Fail:", e)
-
-env_tex.image.colorspace_settings.name = 'sRGB'
-# env_tex.image.colorspace_settings.name = 'Non-Color'
-mapping.inputs['Rotation'].default_value = (0, 0, math.radians(180))
+print("Pure white environment applied instead of global env map")
 
 # Add a camera
 cam_location = Vector(insertion_points[:3])
@@ -136,3 +124,49 @@ scene.view_settings.view_transform = 'Raw'
 scene.render.filepath = envmap_path
 bpy.ops.render.render(write_still=True)
 print(f"HDR Environment map saved to {envmap_path}")
+
+# Combine envmap.hdr and global.hdr by removing white parts from envmap
+import cv2
+import numpy as np
+
+global_hdr_path = os.path.join(base_path, "global.hdr")
+combined_envmap_path = os.path.join(output_dir, "combined_envmap.hdr")
+
+if os.path.exists(global_hdr_path):
+    print(f"Combining {envmap_path} and {global_hdr_path}...")
+    
+    # Load HDR images
+    envmap = cv2.imread(envmap_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
+    global_hdr = cv2.imread(global_hdr_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
+    
+    if envmap is not None and global_hdr is not None:
+        # Convert BGR to RGB for processing
+        envmap_rgb = cv2.cvtColor(envmap, cv2.COLOR_BGR2RGB)
+        global_rgb = cv2.cvtColor(global_hdr, cv2.COLOR_BGR2RGB)
+        
+        # Resize global_hdr to match envmap dimensions if necessary
+        if global_rgb.shape != envmap_rgb.shape:
+            global_rgb = cv2.resize(global_rgb, (envmap_rgb.shape[1], envmap_rgb.shape[0]))
+        
+        # Create mask for white/bright areas in envmap (threshold for HDR)
+        # For HDR, white areas typically have high intensity values
+        brightness = np.mean(envmap_rgb, axis=2)
+        white_threshold = 0.95  # Adjust this threshold as needed
+        white_mask = brightness > white_threshold
+        
+        # Create 3-channel mask
+        mask_3d = np.stack([white_mask, white_mask, white_mask], axis=2)
+        
+        # Combine: use global_hdr where envmap is white, otherwise use envmap
+        combined = np.where(mask_3d, global_rgb, envmap_rgb)
+        
+        # Convert back to BGR for OpenCV
+        combined_bgr = cv2.cvtColor(combined.astype(np.float32), cv2.COLOR_RGB2BGR)
+        
+        # Save combined HDR
+        cv2.imwrite(combined_envmap_path, combined_bgr)
+        print(f"Combined environment map saved to {combined_envmap_path}")
+    else:
+        print("Failed to load HDR images for combination")
+else:
+    print(f"Global HDR file not found at {global_hdr_path}, skipping combination")

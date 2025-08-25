@@ -78,7 +78,7 @@ links.new(env_tex.outputs['Color'], background.inputs['Color'])
 links.new(background.outputs['Background'], output.inputs['Surface'])
 
 # Load environment image
-image_path = os.path.join(output_path, "envmap.hdr")
+image_path = os.path.join(output_path, "combined_envmap.hdr")
 global_image_path = os.path.join(input_path, "global.hdr")
 image = bpy.data.images.load(image_path)
 global_image = bpy.data.images.load(global_image_path)
@@ -100,7 +100,7 @@ if insert_object:
     imported_obj.location = insertion_points
     imported_obj.scale = Vector((0.05, 0.05, 0.05)) 
 else:
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.052)
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.04)
     bpy.ops.object.shade_smooth()
 
     sphere = bpy.context.active_object
@@ -110,8 +110,8 @@ else:
     bsdf = mat.node_tree.nodes.get('Principled BSDF')
 
     bsdf.inputs['Metallic'].default_value = 1.0
-    bsdf.inputs['Roughness'].default_value = 0.194
-    bsdf.inputs['Base Color'].default_value = (1.0, 1.0, 1.0, 1.0)
+    bsdf.inputs['Roughness'].default_value = 0.1
+    bsdf.inputs['Base Color'].default_value = (0.8, 0.8, 0.9, 1.0)
     sphere.data.materials.append(mat)
 
 R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
@@ -166,6 +166,14 @@ composite = nodes.new(type='CompositorNodeComposite')
 scale_node = nodes.new(type='CompositorNodeScale')
 
 img_path = os.path.join(input_path, "input.jpg")
+
+# If input.jpg doesn't exist, try to use dataset/{folder_name}/{folder_name}_before.png
+if not os.path.exists(img_path):
+    dataset_img_path = os.path.join("/Users/jinwoo/Documents/work/svoi/dataset", folder_name, f"{folder_name}_before.png")
+    if os.path.exists(dataset_img_path):
+        img_path = dataset_img_path
+        print(f"Using dataset image: {img_path}")
+
 image_node.image = bpy.data.images.load(img_path)
 scale_node.space = 'RELATIVE'
 scale_node.inputs[1].default_value = 1

@@ -98,6 +98,13 @@ def main():
     K_path = os.path.join(base_path, "K.npy")
     c2w_path = os.path.join(base_path, "c2w.npy")
     img_path = os.path.join(base_path, "input.jpg")
+    
+    # If input.jpg doesn't exist, try to use dataset/{folder_name}/{folder_name}_before.png
+    if not os.path.exists(img_path):
+        dataset_img_path = os.path.join("/Users/jinwoo/Documents/work/svoi/dataset", args.folder_name, f"{args.folder_name}_before.png")
+        if os.path.exists(dataset_img_path):
+            img_path = dataset_img_path
+            print(f"Using dataset image: {img_path}")
 
     depth_map = np.load(depth_path)
     K = np.load(K_path)

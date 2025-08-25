@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import argparse
+import os
 from skimage.metrics import structural_similarity as ssim
 
 def find_non_transparent_bbox(image):
@@ -40,63 +42,82 @@ def compute_ssim(img1, img2):
         gray1, gray2 = img1, img2
     return ssim(gray1, gray2, data_range=255)
 
-gt_path = "out/data1/gto1.png"
-img1_path = "out/data1/result_object.png"
-img2_path = "out/data1/result_object2.png"
-img3_path = "out/data1/result_object3.png"
+def main():
+    parser = argparse.ArgumentParser(description='Crop and compare images')
+    parser.add_argument('folder_name', type=str, help='Folder name (e.g., 000, data1)')
+    parser.add_argument('--gt_name', type=str, default='gto.png', help='Ground truth image name (default: gto.png)')
+    args = parser.parse_args()
+    
+    # Set up paths
+    base_path = f"out/{args.folder_name}"
+    dataset_path = f"dataset/{args.folder_name}"
+    gt_path = os.path.join(dataset_path, args.gt_name)
+    # Check which result files exist
+    available_images = []
+    image_paths = []
+    
+    for i, filename in enumerate(["result_object.png", "result_object2.png", "result_object3.png", "result_object4.png"], 1):
+        path = os.path.join(base_path, filename)
+        if os.path.exists(path):
+            available_images.append(f"img{i}")
+            image_paths.append(path)
+    
+    if not os.path.exists(gt_path):
+        print(f"Error: Ground truth file not found: {gt_path}")
+        return
+        
+    if len(available_images) == 0:
+        print(f"Error: No result images found in {base_path}")
+        return
+    
+    print(f"Found {len(available_images)} result images: {', '.join(available_images)}")
+    
+    gt = cv2.imread(gt_path, cv2.IMREAD_UNCHANGED)
+    images = [cv2.imread(path, cv2.IMREAD_UNCHANGED) for path in image_paths]
 
-gt = cv2.imread(gt_path, cv2.IMREAD_UNCHANGED)
-img1 = cv2.imread(img1_path, cv2.IMREAD_UNCHANGED)
-img2 = cv2.imread(img2_path, cv2.IMREAD_UNCHANGED)
-img3 = cv2.imread(img3_path, cv2.IMREAD_UNCHANGED)
+    print(f"GT: {gt.shape}")
+    for i, img in enumerate(images):
+        print(f"{available_images[i]}: {img.shape}")
+    print()
 
-print(f"GT: {gt.shape}")
-print(f"Image 1: {img1.shape}")
-print(f"Image 2: {img2.shape}")
-print(f"Image 3: {img3.shape}")
-print()
+    # Find bounding boxes
+    gt_bbox = find_non_transparent_bbox(gt)
+    image_bboxes = [find_non_transparent_bbox(img) for img in images]
 
-gt_bbox = find_non_transparent_bbox(gt)
-img1_bbox = find_non_transparent_bbox(img1)
-img2_bbox = find_non_transparent_bbox(img2)
-img3_bbox = find_non_transparent_bbox(img3)
+    if gt_bbox is None or any(bbox is None for bbox in image_bboxes):
+        print("No non-transparent parts found in some images!")
+        return
 
-if any(bbox is None for bbox in [gt_bbox, img1_bbox, img2_bbox, img3_bbox]):
-    print("No non-transparent parts found in some images!")
-    exit(1)
+    print(f"GT: x={gt_bbox[0]}:{gt_bbox[2]}, y={gt_bbox[1]}:{gt_bbox[3]} -> size: {gt_bbox[2]-gt_bbox[0]+1} x {gt_bbox[3]-gt_bbox[1]+1}")
+    for i, bbox in enumerate(image_bboxes):
+        print(f"{available_images[i]}: x={bbox[0]}:{bbox[2]}, y={bbox[1]}:{bbox[3]} -> size: {bbox[2]-bbox[0]+1} x {bbox[3]-bbox[1]+1}")
+    print()
 
-print(f"GT: x={gt_bbox[0]}:{gt_bbox[2]}, y={gt_bbox[1]}:{gt_bbox[3]} -> size: {gt_bbox[2]-gt_bbox[0]+1} x {gt_bbox[3]-gt_bbox[1]+1}")
-print(f"Image 1: x={img1_bbox[0]}:{img1_bbox[2]}, y={img1_bbox[1]}:{img1_bbox[3]} -> size: {img1_bbox[2]-img1_bbox[0]+1} x {img1_bbox[3]-img1_bbox[1]+1}")
-print(f"Image 2: x={img2_bbox[0]}:{img2_bbox[2]}, y={img2_bbox[1]}:{img2_bbox[3]} -> size: {img2_bbox[2]-img2_bbox[0]+1} x {img2_bbox[3]-img2_bbox[1]+1}")
-print(f"Image 3: x={img3_bbox[0]}:{img3_bbox[2]}, y={img3_bbox[1]}:{img3_bbox[3]} -> size: {img3_bbox[2]-img3_bbox[0]+1} x {img3_bbox[3]-img3_bbox[1]+1}")
-print()
+    # Crop images
+    gt_cropped = crop_image(gt, gt_bbox)
+    images_cropped = [crop_image(img, bbox) for img, bbox in zip(images, image_bboxes)]
 
-gt_cropped = crop_image(gt, gt_bbox)
-img1_cropped = crop_image(img1, img1_bbox)
-img2_cropped = crop_image(img2, img2_bbox)
-img3_cropped = crop_image(img3, img3_bbox)
+    # Resize to match GT
+    gt_width, gt_height = gt_cropped.shape[1], gt_cropped.shape[0]
+    images_resized = [cv2.resize(img_cropped, (gt_width, gt_height), interpolation=cv2.INTER_LANCZOS4) 
+                      for img_cropped in images_cropped]
 
-gt_width, gt_height = gt_cropped.shape[1], gt_cropped.shape[0]
-img1_resized = cv2.resize(img1_cropped, (gt_width, gt_height), interpolation=cv2.INTER_LANCZOS4)
-img2_resized = cv2.resize(img2_cropped, (gt_width, gt_height), interpolation=cv2.INTER_LANCZOS4)
-img3_resized = cv2.resize(img3_cropped, (gt_width, gt_height), interpolation=cv2.INTER_LANCZOS4)
+    # Save cropped and resized images
+    cv2.imwrite(os.path.join(base_path, "gt_cropped.png"), gt_cropped)
+    for i, (img_name, img_cropped, img_resized) in enumerate(zip(available_images, images_cropped, images_resized)):
+        cv2.imwrite(os.path.join(base_path, f"{img_name}_cropped.png"), img_cropped)
+        cv2.imwrite(os.path.join(base_path, f"{img_name}_resized.png"), img_resized)
 
-cv2.imwrite("out/data1/gt_cropped.png", gt_cropped)
-cv2.imwrite("out/data1/img1_cropped.png", img1_cropped)
-cv2.imwrite("out/data1/img2_cropped.png", img2_cropped)
-cv2.imwrite("out/data1/img3_cropped.png", img3_cropped)
+    print(f"- {os.path.join(base_path, 'gt_cropped.png')}")
+    for img_name in available_images:
+        print(f"- {os.path.join(base_path, f'{img_name}_cropped.png')}")
+    print()
 
-cv2.imwrite("out/data1/img1_resized.png", img1_resized)
-cv2.imwrite("out/data1/img2_resized.png", img2_resized)
-cv2.imwrite("out/data1/img3_resized.png", img3_resized)
+    # Compute metrics
+    for i, (img_name, img_resized) in enumerate(zip(available_images, images_resized)):
+        psnr_val = compute_psnr(gt_cropped, img_resized)
+        ssim_val = compute_ssim(gt_cropped, img_resized)
+        print(f"[{img_name}] PSNR: {psnr_val:.2f} dB, SSIM: {ssim_val:.4f}")
 
-print("- out/data1/gt_cropped.png")
-print("- out/data1/img1_cropped.png")
-print("- out/data1/img2_cropped.png")
-print("- out/data1/img3_cropped.png")
-print()
-
-for i, pred_resized in enumerate([img1_resized, img2_resized, img3_resized], start=1):
-    psnr_val = compute_psnr(gt_cropped, pred_resized)
-    ssim_val = compute_ssim(gt_cropped, pred_resized)
-    print(f"[img{i}] PSNR: {psnr_val:.2f} dB, SSIM: {ssim_val:.4f}")
+if __name__ == "__main__":
+    main()
