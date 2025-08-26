@@ -12,14 +12,11 @@ folder_name = sys.argv[4]
 insertion_points = [float(x) for x in sys.argv[1:4]]
 rx, ry, rz = [float(x) for x in sys.argv[5:8]]
 base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
-glb_path = os.path.join(base_path, "full_scene.glb")
-gltf_path = os.path.join(base_path, "full_scene.gltf")
-# image_path = os.path.join(base_path, "global.hdr")
-# image_path = os.path.join(base_path, "global.png")  # No longer needed for white env
+
+obj_path = os.path.join(base_path, "full_scene.obj")
 
 # Use gltf if available, otherwise use glb
-import_path = gltf_path if os.path.exists(gltf_path) else glb_path
-print(f"Loading 3D scene from: {import_path}")
+print(f"Loading 3D scene from: {obj_path}")
 
 
 print("Insertion points:", insertion_points)
@@ -28,7 +25,7 @@ for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
 # Load the scene file
-bpy.ops.import_scene.gltf(filepath=import_path)
+bpy.ops.wm.obj_import(filepath=obj_path)
 
 q_rot = Quaternion((0, -1, 1, 0))
 
@@ -41,6 +38,36 @@ for obj in bpy.data.objects:
         #     obj.hide_viewport = True
         #     obj.hide_render = True
         #     continue
+
+# Modify material_0 to use vertex color attribute for base color
+if "material_0" in bpy.data.materials:
+    mat = bpy.data.materials["material_0"]
+    if mat.use_nodes:
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        
+        # Find the Principled BSDF node
+        bsdf = None
+        for node in nodes:
+            if node.type == 'BSDF_PRINCIPLED':
+                bsdf = node
+                break
+        
+        if bsdf:
+            # Add Color Attribute node
+            color_attr_node = nodes.new(type='ShaderNodeAttribute')
+            color_attr_node.attribute_name = 'Color'  # Vertex color attribute name
+            color_attr_node.location = (bsdf.location.x - 300, bsdf.location.y)
+            
+            # Connect Color Attribute to Base Color
+            links.new(color_attr_node.outputs['Color'], bsdf.inputs['Base Color'])
+            print("material_0의 베이스 컬러가 컬러 속성으로 변경되었습니다")
+        else:
+            print("material_0에서 Principled BSDF 노드를 찾을 수 없습니다")
+    else:
+        print("material_0이 노드를 사용하지 않습니다")
+else:
+    print("material_0을 찾을 수 없습니다")
 
 world = bpy.context.scene.world
 world.use_nodes = True
