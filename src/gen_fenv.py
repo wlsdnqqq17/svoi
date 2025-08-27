@@ -4,6 +4,8 @@ from mathutils import Quaternion, Vector, Euler
 import math
 import sys
 
+NO_FLOOR = True
+
 if len(sys.argv) != 8:
     print("Usage: python gen_fenv.py <insertion_x> <insertion_y> <insertion_z> <folder_name>")
     sys.exit(1)
@@ -12,11 +14,13 @@ folder_name = sys.argv[4]
 insertion_points = [float(x) for x in sys.argv[1:4]]
 rx, ry, rz = [float(x) for x in sys.argv[5:8]]
 base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
-
-obj_path = os.path.join(base_path, "full_scene.obj")
+if NO_FLOOR:
+    three_d_path = os.path.join(base_path, "full_scene.glb")
+else:
+    three_d_path = os.path.join(base_path, "full_scene.obj")
 
 # Use gltf if available, otherwise use glb
-print(f"Loading 3D scene from: {obj_path}")
+print(f"Loading 3D scene from: {three_d_path}")
 
 
 print("Insertion points:", insertion_points)
@@ -25,7 +29,10 @@ for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
 # Load the scene file
-bpy.ops.wm.obj_import(filepath=obj_path)
+if NO_FLOOR:
+    bpy.ops.import_scene.gltf(filepath=three_d_path)
+else:
+    bpy.ops.wm.obj_import(filepath=three_d_path)
 
 q_rot = Quaternion((0, -1, 1, 0))
 
@@ -34,10 +41,10 @@ for obj in bpy.data.objects:
     if obj.type == 'MESH':
         obj.rotation_mode = 'QUATERNION'
         obj.rotation_quaternion = q_rot @ obj.rotation_quaternion
-        # if obj.name == "geometry_0":
-        #     obj.hide_viewport = True
-        #     obj.hide_render = True
-        #     continue
+        if NO_FLOOR and obj.name == "geometry_0":
+            obj.hide_viewport = True
+            obj.hide_render = True
+            continue
 
 # Modify material_0 to use vertex color attribute for base color
 if "material_0" in bpy.data.materials:
@@ -128,7 +135,10 @@ print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 # Save the scene as a blend file
 output_dir = f"/Users/jinwoo/Documents/work/svoi/out/{folder_name}"
 blend_path = os.path.join(output_dir, "making_envmap.blend")
-envmap_path = os.path.join(output_dir, "envmap.hdr")
+if NO_FLOOR:
+    envmap_path = os.path.join(output_dir, "envmap.png")
+else:
+    envmap_path = os.path.join(output_dir, "envmap.hdr")
 
 os.makedirs(os.path.dirname(blend_path), exist_ok=True)
 if os.path.exists(blend_path):
@@ -143,57 +153,96 @@ scene.render.resolution_x = 1024
 scene.render.resolution_y = 512
 scene.render.resolution_percentage = 100
 
-scene.render.image_settings.file_format = 'HDR'
-scene.render.image_settings.color_depth = '32'
-scene.view_settings.view_transform = 'Raw'
-
+if NO_FLOOR:
+    scene.render.image_settings.file_format = 'PNG'
+    scene.render.image_settings.color_depth = '16'
+    scene.view_settings.view_transform = 'Standard'
+    print("NO_FLOOR: Saving envmap as PNG")
+else:
+    scene.render.image_settings.file_format = 'HDR'
+    scene.render.image_settings.color_depth = '32'
+    scene.view_settings.view_transform = 'Raw'
+    print("FLOOR: Saving envmap as HDR")
 
 scene.render.filepath = envmap_path
 bpy.ops.render.render(write_still=True)
-print(f"HDR Environment map saved to {envmap_path}")
+print(f"Environment map saved to {envmap_path}")
 
 # Combine envmap.hdr and global.hdr by removing white parts from envmap
 import cv2
 import numpy as np
 
-global_hdr_path = os.path.join(base_path, "global.hdr")
-combined_envmap_path = os.path.join(output_dir, "combined_envmap.hdr")
+if NO_FLOOR:
+    print("NO FLOOR, using png")
+    global_hdr_path = os.path.join(base_path, "global.png")
+else:
+    print("Floor, using hdr")
+    global_hdr_path = os.path.join(base_path, "global.hdr")
+
+if NO_FLOOR:
+    combined_envmap_path = os.path.join(output_dir, "combined_envmap.png")
+else:
+    combined_envmap_path = os.path.join(output_dir, "combined_envmap.hdr")
 
 if os.path.exists(global_hdr_path):
     print(f"Combining {envmap_path} and {global_hdr_path}...")
     
-    # Load HDR images
-    envmap = cv2.imread(envmap_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
-    global_hdr = cv2.imread(global_hdr_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
+    # Load envmap (PNG or HDR depending on NO_FLOOR)
+    if NO_FLOOR:
+        # PNG envmap - load as regular image
+        envmap = cv2.imread(envmap_path, cv2.IMREAD_COLOR)
+        if envmap is not None:
+            envmap = envmap.astype(np.float32) / 255.0  # Normalize PNG to 0-1 range
+    else:
+        # HDR envmap
+        envmap = cv2.imread(envmap_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
     
-    if envmap is not None and global_hdr is not None:
-        # Convert BGR to RGB for processing
-        envmap_rgb = cv2.cvtColor(envmap, cv2.COLOR_BGR2RGB)
-        global_rgb = cv2.cvtColor(global_hdr, cv2.COLOR_BGR2RGB)
+    # Load global image (HDR or PNG depending on NO_FLOOR)
+    if NO_FLOOR:
+        # PNG file - load as regular image and convert to float32
+        global_img = cv2.imread(global_hdr_path, cv2.IMREAD_COLOR)
+        if global_img is not None:
+            global_img = global_img.astype(np.float32) / 255.0  # Normalize PNG to 0-1 range
+    else:
+        # HDR file
+        global_img = cv2.imread(global_hdr_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
+    
+    if envmap is not None and global_img is not None:
+        # Keep in BGR for consistency - no color space conversion needed
+        envmap_bgr = envmap
+        global_bgr = global_img
         
-        # Resize global_hdr to match envmap dimensions if necessary
-        if global_rgb.shape != envmap_rgb.shape:
-            global_rgb = cv2.resize(global_rgb, (envmap_rgb.shape[1], envmap_rgb.shape[0]))
+        # Resize global image to match envmap dimensions if necessary
+        if global_bgr.shape != envmap_bgr.shape:
+            global_bgr = cv2.resize(global_bgr, (envmap_bgr.shape[1], envmap_bgr.shape[0]))
         
-        # Create mask for white/bright areas in envmap (threshold for HDR)
-        # For HDR, white areas typically have high intensity values
-        brightness = np.mean(envmap_rgb, axis=2)
-        white_threshold = 0.95  # Adjust this threshold as needed
+        # Create mask for white/bright areas in envmap
+        brightness = np.mean(envmap_bgr, axis=2)
+        if NO_FLOOR:
+            # For PNG, use a more conservative threshold since PNG is 0-1 range
+            white_threshold = 0.98
+        else:
+            # For HDR, white areas can have values > 1
+            white_threshold = 0.95
         white_mask = brightness > white_threshold
         
         # Create 3-channel mask
         mask_3d = np.stack([white_mask, white_mask, white_mask], axis=2)
         
-        # Combine: use global_hdr where envmap is white, otherwise use envmap
-        combined = np.where(mask_3d, global_rgb, envmap_rgb)
+        # Combine: use global image where envmap is white, otherwise use envmap
+        combined = np.where(mask_3d, global_bgr, envmap_bgr)
         
-        # Convert back to BGR for OpenCV
-        combined_bgr = cv2.cvtColor(combined.astype(np.float32), cv2.COLOR_RGB2BGR)
-        
-        # Save combined HDR
-        cv2.imwrite(combined_envmap_path, combined_bgr)
+        # Save combined image
+        if NO_FLOOR:
+            # Convert back to 0-255 range for PNG
+            combined_png = (combined * 255).astype(np.uint8)
+            cv2.imwrite(combined_envmap_path, combined_png)
+        else:
+            # Save as HDR (float32)
+            combined_bgr = combined.astype(np.float32)
+            cv2.imwrite(combined_envmap_path, combined_bgr)
         print(f"Combined environment map saved to {combined_envmap_path}")
     else:
-        print("Failed to load HDR images for combination")
+        print("Failed to load images for combination")
 else:
     print(f"Global HDR file not found at {global_hdr_path}, skipping combination")

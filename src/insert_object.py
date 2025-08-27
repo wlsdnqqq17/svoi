@@ -5,6 +5,8 @@ import math
 import numpy as np
 from mathutils import Vector, Euler
 
+NO_FLOOR = True
+
 folder_name = sys.argv[6]
 input_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
 output_path = os.path.join("/Users/jinwoo/Documents/work/svoi/out", folder_name)
@@ -78,12 +80,26 @@ links.new(env_tex.outputs['Color'], background.inputs['Color'])
 links.new(background.outputs['Background'], output.inputs['Surface'])
 
 # Load environment image
-image_path = os.path.join(output_path, "combined_envmap.hdr")
-global_image_path = os.path.join(input_path, "global.hdr")
+if NO_FLOOR:
+    image_path = os.path.join(output_path, "combined_envmap.png")
+    global_image_path = os.path.join(input_path, "global.png")
+else:
+    image_path = os.path.join(output_path, "combined_envmap.hdr")
+    global_image_path = os.path.join(input_path, "global.hdr")
+
 image = bpy.data.images.load(image_path)
 global_image = bpy.data.images.load(global_image_path)
 env_tex.image = image
-env_tex.image.colorspace_settings.name = 'Non-Color'
+
+# Set proper colorspace based on file type
+if NO_FLOOR:
+    # PNG files should use sRGB colorspace
+    env_tex.image.colorspace_settings.name = 'sRGB'
+    global_image.colorspace_settings.name = 'sRGB'
+else:
+    # HDR files should use Linear colorspace
+    env_tex.image.colorspace_settings.name = 'Linear Rec.709'
+    global_image.colorspace_settings.name = 'Linear Rec.709'
 image.pack()
 global_image.pack()
 bpy.context.scene.render.film_transparent = True
@@ -110,8 +126,8 @@ else:
     bsdf = mat.node_tree.nodes.get('Principled BSDF')
 
     bsdf.inputs['Metallic'].default_value = 1.0
-    bsdf.inputs['Roughness'].default_value = 0.1
-    bsdf.inputs['Base Color'].default_value = (0.8, 0.8, 0.9, 1.0)
+    bsdf.inputs['Roughness'].default_value = 0.194
+    bsdf.inputs['Base Color'].default_value = (0.8, 0.8, 0.8, 1.0)
     sphere.data.materials.append(mat)
 
 R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
