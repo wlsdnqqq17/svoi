@@ -2,18 +2,89 @@ import bpy
 import os
 from mathutils import Quaternion, Vector, Euler
 import math
-import sys
+import argparse
+import json
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+import cv2
 
-NO_FLOOR = True
 
-if len(sys.argv) != 8:
-    print("Usage: python gen_fenv.py <insertion_x> <insertion_y> <insertion_z> <folder_name>")
-    sys.exit(1)
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description='Generate environment map for 3D scene with camera insertion',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument('folder_name', type=str, 
+                       help='Input folder name containing the 3D scene')
+    parser.add_argument('--no_floor', action='store_true',
+                       help='Generate environment map without floor')
+    parser.add_argument('--offset_distance', type=float, default=0.01,
+                       help='Offset distance from surface in meters (default: 0.01m = 1cm)')
+    
+    return parser.parse_args()
 
-folder_name = sys.argv[4]
-insertion_points = [float(x) for x in sys.argv[1:4]]
-rx, ry, rz = [float(x) for x in sys.argv[5:8]]
+def make_transform_matrix(pos, euler_deg):
+    rot = R.from_euler('xyz', euler_deg, degrees=True).as_matrix()
+    T = np.eye(4)
+    T[:3, :3] = rot
+    T[:3, 3] = pos
+    return T
+    
+# Parse command line arguments
+args = parse_arguments()
+folder_name = args.folder_name
+NO_FLOOR = args.no_floor
+OFFSET_DISTANCE = args.offset_distance
 base_path = os.path.join("/Users/jinwoo/Documents/work/svoi/input", folder_name)
+depth_map_path = os.path.join(base_path, "depth_map.npy")
+K_path = os.path.join(base_path, "K.npy")
+c2w_path = os.path.join(base_path, "c2w.npy")
+depth_map = np.load(depth_map_path)
+K = np.load(K_path)
+c2w = np.load(c2w_path)
+dataset_path = os.path.join("/Users/jinwoo/Documents/work/svoi/dataset", folder_name)
+
+json_path = os.path.join(dataset_path, f"{folder_name}_metadata.json")
+with open(json_path, 'r') as f:
+    metadata = json.load(f)
+
+px, py = [int(x) for x in metadata["insertion_object"]["pixel_coordinates"]]
+
+print(f"px: {px}, py: {py}")
+
+z = float(depth_map[py, px])
+fx, fy = K[0, 0], K[1, 1]
+cx, cy = K[0, 2], K[1, 2]
+x_cam = (px - cx) * z / fx
+y_cam = (py - cy) * z / fy
+cam_pt_h = np.array([x_cam, y_cam, z, 1.0])
+world_pt = c2w @ cam_pt_h
+Y, Z, X = world_pt[:3]
+Y = -Y
+Z = -Z
+
+# 표면에서 살짝 떨어뜨리기 위한 원점 방향 오프셋
+surface_point = np.array([X, Y, Z])
+origin = np.array([0.0, 0.0, 0.0])
+point_to_origin = origin - surface_point
+point_to_origin_normalized = point_to_origin / np.linalg.norm(point_to_origin)
+
+# 원점 방향으로 오프셋 적용 (원점 쪽으로 이동)
+offset_point = surface_point + point_to_origin_normalized * OFFSET_DISTANCE
+
+insertion_position = tuple(offset_point)
+print(f"Surface point: {surface_point}")
+print(f"Origin direction offset: {point_to_origin_normalized * OFFSET_DISTANCE}")
+print(f"Final insertion position: {insertion_position}")
+
+T_A = make_transform_matrix(metadata["camera_location"], metadata["camera_rotation"])
+T_B = make_transform_matrix([0., 0., 0.], (90., 0., -90.))
+
+T_o = make_transform_matrix(metadata["insertion_object"]["location"], metadata["insertion_object"]["rotation"])
+
+T_o_prime = T_B @ np.linalg.inv(T_A) @ T_o
+insertion_rotation = R.from_matrix(T_o_prime[:3, :3]).as_euler('xyz', degrees=True)
+
 if NO_FLOOR:
     three_d_path = os.path.join(base_path, "full_scene.glb")
 else:
@@ -23,20 +94,20 @@ else:
 print(f"Loading 3D scene from: {three_d_path}")
 
 
-print("Insertion points:", insertion_points)
-# Clear existing objects
+print("Insertion points:", insertion_position)
+
+# Clear existing objects and load main scene
 for obj in bpy.data.objects:
     bpy.data.objects.remove(obj)
 
-# Load the scene file
+# Load the main scene
 if NO_FLOOR:
     bpy.ops.import_scene.gltf(filepath=three_d_path)
 else:
     bpy.ops.wm.obj_import(filepath=three_d_path)
 
+# Apply rotation to all mesh objects in the main scene
 q_rot = Quaternion((0, -1, 1, 0))
-
-# Rotate all mesh objects
 for obj in bpy.data.objects:
     if obj.type == 'MESH':
         obj.rotation_mode = 'QUATERNION'
@@ -103,11 +174,8 @@ links.new(background.outputs['Background'], output.inputs['Surface'])
 print("Pure white environment applied instead of global env map")
 
 # Add a camera
-cam_location = Vector(insertion_points[:3])
-R = Euler((math.radians(rx), math.radians(ry), math.radians(rz)), 'XYZ').to_matrix()
-n_world = (R @ Vector((0, 0, 1))).normalized()
-radius = 0.052
-cam_location = cam_location - n_world * radius
+cam_location = Vector(insertion_position[:3])
+cam_location = cam_location
 
 look_dir = Vector((-1, 0, 0))
 target = cam_location + look_dir
@@ -129,7 +197,7 @@ bpy.context.scene.cycles.device = 'GPU'
 cam = bpy.context.scene.camera.data
 cam.type = 'PANO'
 cam.panorama_type = 'EQUIRECTANGULAR'
-cam.clip_start = 0.01
+cam.clip_start = 0.001
 print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 
 # Save the scene as a blend file
@@ -167,10 +235,6 @@ else:
 scene.render.filepath = envmap_path
 bpy.ops.render.render(write_still=True)
 print(f"Environment map saved to {envmap_path}")
-
-# Combine envmap.hdr and global.hdr by removing white parts from envmap
-import cv2
-import numpy as np
 
 if NO_FLOOR:
     print("NO FLOOR, using png")
