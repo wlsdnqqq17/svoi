@@ -1,10 +1,9 @@
 dataset
 dataset_legacy
 input
+HDRIs
+textures
 out
 
 .DS_Store
 
-src/plane.blend
-src/plane2.blend
-src/plane2.blend1
