@@ -4,6 +4,7 @@ import argparse
 import os
 from skimage.metrics import structural_similarity as ssim
 
+
 def find_non_transparent_bbox(image):
     if len(image.shape) == 3 and image.shape[2] == 4:
         alpha = image[:, :, 3]
@@ -45,13 +46,12 @@ def compute_ssim(img1, img2):
 def main():
     parser = argparse.ArgumentParser(description='Crop and compare images')
     parser.add_argument('folder_name', type=str, help='Folder name (e.g., 000, data1)')
-    parser.add_argument('--gt_name', type=str, default='gto.png', help='Ground truth image name (default: gto.png)')
     args = parser.parse_args()
     
     # Set up paths
     base_path = f"out/{args.folder_name}"
     dataset_path = f"dataset/{args.folder_name}"
-    gt_path = os.path.join(dataset_path, args.gt_name)
+    gt_path = os.path.join(dataset_path, f"{args.folder_name}_object.png")
     # Check which result files exist
     available_images = []
     image_paths = []
@@ -102,15 +102,18 @@ def main():
     images_resized = [cv2.resize(img_cropped, (gt_width, gt_height), interpolation=cv2.INTER_LANCZOS4) 
                       for img_cropped in images_cropped]
 
-    # Save cropped and resized images
-    cv2.imwrite(os.path.join(base_path, "gt_cropped.png"), gt_cropped)
+    # Save cropped and resized images in eval folder
+    eval_path = os.path.join(base_path, "eval")
+    os.makedirs(eval_path, exist_ok=True)
+    
+    cv2.imwrite(os.path.join(eval_path, "gt_cropped.png"), gt_cropped)
     for i, (img_name, img_cropped, img_resized) in enumerate(zip(available_images, images_cropped, images_resized)):
-        cv2.imwrite(os.path.join(base_path, f"{img_name}_cropped.png"), img_cropped)
-        cv2.imwrite(os.path.join(base_path, f"{img_name}_resized.png"), img_resized)
+        cv2.imwrite(os.path.join(eval_path, f"{img_name}_cropped.png"), img_cropped)
+        cv2.imwrite(os.path.join(eval_path, f"{img_name}_resized.png"), img_resized)
 
-    print(f"- {os.path.join(base_path, 'gt_cropped.png')}")
+    print(f"- {os.path.join(eval_path, 'gt_cropped.png')}")
     for img_name in available_images:
-        print(f"- {os.path.join(base_path, f'{img_name}_cropped.png')}")
+        print(f"- {os.path.join(eval_path, f'{img_name}_cropped.png')}")
     print()
 
     # Compute metrics
