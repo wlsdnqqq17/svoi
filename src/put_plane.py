@@ -289,7 +289,7 @@ def create_plane_with_textures(tex_dir, dataset_id, plane_size):
     """텍스처가 적용된 평면 생성"""
     # 텍스처 파일 찾기 (인라인)
     def find_texture(texture_type):
-        pattern = str(tex_dir / f"{dataset_id}-{texture_type}.*")
+        pattern = str(tex_dir / f"{texture_type}.*")
         matches = glob.glob(pattern)
         if matches:
             return matches[0]
@@ -488,9 +488,33 @@ def place_all_objects(glb_paths, args, target_max_dim_glb, target_max_dim_primit
             scale_factor = target_dim / current_dim if current_dim > 0 else 1.0
             parent_object.scale = (scale_factor, scale_factor, scale_factor)
             
-            # 랜덤 Z축 회전
+            # insert_object.py 방식으로 회전 적용
             random_rotation = random.uniform(0, 2 * math.pi)
-            parent_object.rotation_euler = Euler((0, 0, random_rotation), 'XYZ')
+            if obj_type == 'glb':
+                # GLB의 경우 선택된 첫 번째 객체에만 회전 적용
+                selected_objects = bpy.context.selected_objects
+                if selected_objects:
+                    imported_obj = selected_objects[0]
+                    imported_obj.rotation_mode = 'XYZ'
+                    
+                    # 기존 회전값 확인 및 출력
+                    original_rotation = imported_obj.rotation_euler
+                    print(f"GLB '{imported_obj.name}' 원본 회전값: X={math.degrees(original_rotation.x):.1f}°, Y={math.degrees(original_rotation.y):.1f}°, Z={math.degrees(original_rotation.z):.1f}°")
+                    
+                    # 기존 회전값에 랜덤 Z축 회전 추가
+                    new_rotation = Euler((original_rotation.x, original_rotation.y, original_rotation.z + random_rotation), 'XYZ')
+                    imported_obj.rotation_euler = new_rotation
+                    
+                    print(f"GLB '{imported_obj.name}' 새로운 회전값: X={math.degrees(new_rotation.x):.1f}°, Y={math.degrees(new_rotation.y):.1f}°, Z={math.degrees(new_rotation.z):.1f}°")
+                else:
+                    # fallback: 부모 객체에 회전 적용
+                    original_rotation = parent_object.rotation_euler
+                    print(f"Parent '{parent_object.name}' 원본 회전값: X={math.degrees(original_rotation.x):.1f}°, Y={math.degrees(original_rotation.y):.1f}°, Z={math.degrees(original_rotation.z):.1f}°")
+                    new_rotation = Euler((original_rotation.x, original_rotation.y, original_rotation.z + random_rotation), 'XYZ')
+                    parent_object.rotation_euler = new_rotation
+            else:
+                # Primitive 객체의 경우 기존 방식 유지
+                parent_object.rotation_euler = Euler((0, 0, random_rotation), 'XYZ')
             
             # 위치 찾기
             current_target = target_max_dim_glb if obj_type == 'glb' else target_max_dim_primitive
@@ -564,6 +588,29 @@ def render_scenes(args, dataset_dir, placed_positions, glb_object_to_file, plane
         render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
         print(f"Rendered scene with Chrome Ball (AFTER): {args.dataset_id}_after.png")
         
+        # OBJECT ONLY: chrome ball만 보이도록 다른 모든 객체 숨기기
+        hidden_objects = []
+        for obj in bpy.data.objects:
+            if obj != insertion_object and obj != camera and obj.type in ['MESH', 'EMPTY']:
+                if not obj.hide_render:
+                    obj.hide_render = True
+                    hidden_objects.append(obj)
+                    print(f"Hiding object: {obj.name}")
+        
+        # 배경을 투명하게 설정
+        bpy.context.scene.render.film_transparent = True
+        print("Set film_transparent = True for chrome ball render")
+        
+        render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
+        print(f"Rendered Chrome Ball only (OBJECT): {args.dataset_id}_object.png")
+        
+        # 배경 투명도 원상복구
+        bpy.context.scene.render.film_transparent = False
+        
+        # 숨겼던 객체들 다시 보이게 하기
+        for obj in hidden_objects:
+            obj.hide_render = False
+        
         # chrome ball 렌더링에서 숨기기
         insertion_object.hide_render = True
         
@@ -581,6 +628,62 @@ def render_scenes(args, dataset_dir, placed_positions, glb_object_to_file, plane
         # GLB 객체 숨기기
         hidden_object_info = hide_glb_object_for_insertion(glb_object_to_file)
         insertion_object = hidden_object_info
+        
+        if insertion_object:
+            # OBJECT ONLY: insertion object만 보이도록 다른 모든 객체 숨기기
+            # 먼저 숨겨진 insertion object를 다시 보이게 함
+            insertion_object_name = insertion_object['name']
+            insertion_obj = bpy.data.objects.get(insertion_object_name)
+            
+            if insertion_obj:
+                print(f"Found insertion object: {insertion_object_name}, type: {insertion_obj.type}")
+                
+                # insertion object와 관련된 모든 객체들 찾기
+                insertion_objects = []
+                if insertion_obj.type == 'EMPTY':
+                    def collect_all_children(obj):
+                        insertion_objects.append(obj)
+                        for child in obj.children:
+                            collect_all_children(child)
+                    collect_all_children(insertion_obj)
+                else:
+                    insertion_objects.append(insertion_obj)
+                
+                # 모든 insertion object들 보이게 하기
+                for obj in insertion_objects:
+                    obj.hide_render = False
+                    print(f"Showing insertion object: {obj.name}")
+                
+                # 다른 모든 객체 숨기기 (insertion object 제외)
+                hidden_objects = []
+                for obj in bpy.data.objects:
+                    if (obj not in insertion_objects and 
+                        obj != camera and 
+                        obj.type in ['MESH', 'EMPTY'] and 
+                        not obj.hide_render):
+                        obj.hide_render = True
+                        hidden_objects.append(obj)
+                        print(f"Hiding object: {obj.name}")
+                
+                # 배경을 투명하게 설정
+                bpy.context.scene.render.film_transparent = True
+                print("Set film_transparent = True for object-only render")
+                
+                render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
+                print(f"Rendered GLB insertion object only (OBJECT): {args.dataset_id}_object.png")
+                
+                # 배경 투명도 원상복구
+                bpy.context.scene.render.film_transparent = False
+                
+                # 숨겼던 객체들 다시 보이게 하기
+                for obj in hidden_objects:
+                    obj.hide_render = False
+                
+                # insertion object들 다시 숨기기
+                for obj in insertion_objects:
+                    obj.hide_render = True
+            else:
+                print(f"Warning: Insertion object '{insertion_object_name}' not found in scene")
         
         # BEFORE: GLB 객체가 숨겨진 상태 렌더링 (편집됨)
         if insertion_object:

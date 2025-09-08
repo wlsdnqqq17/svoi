@@ -45,6 +45,36 @@ def main():
         else:
             print(f"[ERROR] File for UID {uid} not found at {src}")
 
+    # Copy random HDRI as envmap.exr
+    hdri_dir = root_dir / "HDRIs"
+    if hdri_dir.exists():
+        hdri_files = list(hdri_dir.glob("*.exr"))
+        if hdri_files:
+            random_hdri = random.choice(hdri_files)
+            envmap_dst = download_dir / "envmap.exr"
+            shutil.copyfile(random_hdri, envmap_dst)
+            print(f"[OK] Copied random HDRI {random_hdri.name} → envmap.exr")
+        else:
+            print("[ERROR] No .exr files found in HDRIs directory")
+    else:
+        print("[ERROR] HDRIs directory not found")
+
+    # Copy random texture folder as textures
+    textures_root_dir = root_dir / "textures"
+    if textures_root_dir.exists():
+        texture_folders = [d for d in textures_root_dir.iterdir() if d.is_dir()]
+        if texture_folders:
+            random_texture_folder = random.choice(texture_folders)
+            textures_dst = download_dir / "textures"
+            if textures_dst.exists():
+                shutil.rmtree(textures_dst)
+            shutil.copytree(random_texture_folder, textures_dst)
+            print(f"[OK] Copied random texture folder {random_texture_folder.name} → textures/")
+        else:
+            print("[ERROR] No texture folders found in textures directory")
+    else:
+        print("[ERROR] textures directory not found")
+
 
 if __name__ == "__main__":
     main()
