@@ -9,23 +9,23 @@ from mathutils import Vector, Euler
 from pathlib import Path
 import colorsys
 from bpy_extras.object_utils import world_to_camera_view
+import bmesh
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate 3D object insertion dataset using Blender")
     parser.add_argument("--dataset_id", type=str, required=True, help="Dataset ID")
-    parser.add_argument("--glb_max_size", type=float, default=1.0, help="Maximum size for GLB objects (default: 1.0)")
-    parser.add_argument("--primitive_max_size", type=float, default=0.6, help="Maximum size for primitive objects (default: 0.6)")
-    parser.add_argument("--plane_size", type=float, default=5.0, help="Plane size (default: 5.0)")
-    parser.add_argument("--safe_margin", type=float, default=0.3, help="Safe margin from plane edges (default: 0.3)")
-    parser.add_argument("--render_samples", type=int, default=64, help="Render samples (default: 64)")
-    parser.add_argument("--num_primitives", type=int, nargs=2, default=[3, 5], help="Range for number of primitives [min max] (default: 3 5)")
-    parser.add_argument("--use_chrome_ball", action="store_true", help="Use chrome ball as insertion object instead of GLB object (default: False)")
+    parser.add_argument("--glb_max_size", type=float, default=1.0, help="Maximum size for GLB objects")
+    parser.add_argument("--primitive_max_size", type=float, default=0.6, help="Maximum size for primitive objects")
+    parser.add_argument("--plane_size", type=float, default=5.0, help="Plane size")
+    parser.add_argument("--safe_margin", type=float, default=0.3, help="Safe margin from plane edges")
+    parser.add_argument("--render_samples", type=int, default=64, help="Render samples")
+    parser.add_argument("--num_primitives", type=int, nargs=2, default=[3, 5], help="Range for number of primitives [min max]")
+    parser.add_argument("--use_chrome_ball", action="store_true", help="Use chrome ball as insertion object")
     
-    # Blender에서 실행될 때는 sys.argv에서 Blender 관련 인자들을 제거
+    # Blender 실행 시 인자 처리
     if '--' in sys.argv:
         blender_args = sys.argv[sys.argv.index('--') + 1:]
     else:
-        # Blender 외부에서 실행될 때를 위한 fallback
         blender_args = sys.argv[1:] if len(sys.argv) > 1 else []
     
     return parser.parse_args(blender_args)
@@ -137,27 +137,20 @@ def calculate_scene_bounds():
     return center, size
 
 def setup_camera(center, size, camera_name, position_offset):
-    """카메라 추가 및 설정 (렌더링 없이)"""
-    # 카메라 추가
     bpy.ops.object.camera_add()
     camera = bpy.context.active_object
     camera.name = camera_name
     
-    # 씬의 크기에 따라 카메라 거리 계산 (더욱 가깝게)
     max_dim = max(size.x, size.y, size.z)
-    camera_distance = max_dim * 0.9  # 더욱 가까운 거리로 조정
+    camera_distance = max_dim * 0.9 
     
-    # 카메라 위치 설정
     camera.location = center + Vector(position_offset) * camera_distance
     
-    # 카메라가 중심점을 바라보도록 설정
     direction = center - camera.location
     camera.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
     
-    # 카메라를 씬의 활성 카메라로 설정
     bpy.context.scene.camera = camera
     
-    # 렌더 설정 (1920x1080)
     bpy.context.scene.render.resolution_x = 1920
     bpy.context.scene.render.resolution_y = 1080
     
@@ -195,19 +188,26 @@ def add_chrome_ball_insertion_object(placed_positions, plane_size, safe_margin):
     bpy.context.view_layer.objects.active = sphere
     bpy.ops.object.shade_smooth()
     
+    print(f"Adding chrome ball insertion object (scale: {sphere_scale})")
+    
     # 유효한 위치 찾기 (인라인)
     for attempt in range(50):
         x_pos = random.uniform(-plane_size/2 + safe_margin, plane_size/2 - safe_margin)
         y_pos = random.uniform(-plane_size/2 + safe_margin, plane_size/2 - safe_margin)
         
-        min_distance = sphere_scale * 2.0
-        too_close = any(
-            math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2) < min_distance
-            for prev_x, prev_y in placed_positions
-        )
+        # 각 기존 객체와의 거리 계산
+        too_close = False
+        for prev_x, prev_y, obj_size in placed_positions:
+            distance = math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2)
+            required_distance = (obj_size + sphere_scale * 2.0) * 0.75
+            if distance < required_distance:
+                too_close = True
+                break
         
-        if not too_close and (abs(x_pos) + sphere_scale <= plane_size/2 - safe_margin and 
-                             abs(y_pos) + sphere_scale <= plane_size/2 - safe_margin):
+        boundary_check = (abs(x_pos) + sphere_scale <= plane_size/2 - safe_margin and 
+                         abs(y_pos) + sphere_scale <= plane_size/2 - safe_margin)
+        
+        if not too_close and boundary_check:
             break
     else:
         # 적절한 위치를 못 찾으면 더 안전한 위치 사용
@@ -219,7 +219,7 @@ def add_chrome_ball_insertion_object(placed_positions, plane_size, safe_margin):
     plane_height = plane.location.z + (plane.dimensions.z / 2)
     sphere.location = (x_pos, y_pos, plane_height + sphere_scale)
     
-    print(f"Chrome ball insertion object added at position: ({x_pos:.2f}, {y_pos:.2f}, {sphere.location.z:.2f})")
+    print(f"Chrome ball placed at ({x_pos:.2f}, {y_pos:.2f}, {sphere.location.z:.2f})")
     return sphere
 
 def hide_glb_object_for_insertion(glb_object_to_file):
@@ -285,20 +285,109 @@ def clear_scene():
     for obj in bpy.data.objects:
         bpy.data.objects.remove(obj)
 
+def find_texture(tex_dir, texture_type):
+    """텍스처 파일 찾기"""
+    pattern = str(tex_dir / f"{texture_type}.*")
+    matches = glob.glob(pattern)
+    if matches:
+        return matches[0]
+    else:
+        raise FileNotFoundError(f"No texture file found for pattern: {pattern}")
+
+def setup_world_environment(dataset_dir):
+    """월드 환경 설정"""
+    world = bpy.context.scene.world
+    world.use_nodes = True
+    world_nodes = world.node_tree.nodes
+    world_links = world.node_tree.links
+
+    # 기존 노드들 제거
+    for node in world_nodes:
+        world_nodes.remove(node)
+
+    # World Output 노드 추가
+    world_output = world_nodes.new(type='ShaderNodeOutputWorld')
+    world_output.location = (300, 0)
+
+    # Environment Texture 노드 추가
+    env_tex = world_nodes.new(type='ShaderNodeTexEnvironment')
+    env_tex.location = (0, 0)
+
+    # Environment Texture 이미지 로드
+    envmap_pattern = str(dataset_dir / "envmap.*")
+    envmap_matches = glob.glob(envmap_pattern)
+    if envmap_matches:
+        env_image_path = envmap_matches[0]
+        env_tex.image = bpy.data.images.load(env_image_path)
+        print(f"World environment map loaded: {env_image_path}")
+        
+        # Environment Texture을 World Output에 연결
+        world_links.new(env_tex.outputs['Color'], world_output.inputs['Surface'])
+        
+        # 환경맵 이미지 패킹
+        if env_tex.image and not env_tex.image.packed_file:
+            env_tex.image.pack()
+    else:
+        raise FileNotFoundError(f"Environment map not found in {dataset_dir}/")
+
+def setup_render_settings(render_samples):
+    """렌더 설정"""
+    bpy.context.scene.render.engine = 'CYCLES'
+    bpy.context.scene.cycles.samples = render_samples
+    bpy.context.scene.cycles.preview_samples = render_samples
+    print(f"Render engine set to Cycles with {render_samples} samples")
+
+def setup_paths_and_validation(args):
+    """경로 설정 및 파일 존재 확인"""
+    root_dir = Path("/Users/jinwoo/Documents/work/svoi")
+    dataset_dir = root_dir / "dataset" / args.dataset_id
+    tex_dir = dataset_dir / "textures"
+    
+    # 디렉토리 존재 확인
+    if not dataset_dir.exists():
+        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
+    if not tex_dir.exists():
+        raise FileNotFoundError(f"Texture directory not found: {tex_dir}")
+    
+    # GLB 파일 경로 확인
+    glb_paths = [dataset_dir / f"{i}.glb" for i in range(1, 4)]
+    for glb_path in glb_paths:
+        if not glb_path.exists():
+            raise FileNotFoundError(f"GLB file not found: {glb_path}")
+    
+    return dataset_dir, tex_dir, glb_paths
+
+def select_camera_angle():
+    """카메라 각도 선택"""
+    diagonal_angles = [
+        (1.8, 0.8, 0.3), (-1.8, 0.8, 0.3), (0.8, 1.8, 0.3), (-0.8, 1.8, 0.3),
+        (1.8, -0.8, 0.3), (-1.8, -0.8, 0.3), (0.8, -1.8, 0.3), (-0.8, -1.8, 0.3),
+        (1.5, 1.5, 0.7), (-1.5, 1.5, 0.7), (1.5, -1.5, 0.7), (-1.5, -1.5, 0.7)
+    ]
+    
+    selected_angle = random.choice(diagonal_angles)
+    return (selected_angle[0], selected_angle[1], selected_angle[2])
+
+def setup_camera_with_angle(selected_angle):
+    """선택된 각도로 카메라 설정"""
+    center, size = calculate_scene_bounds()
+    center = Vector((0, 0, 0))
+    camera = setup_camera(center, size, "Camera_Diagonal", selected_angle)
+    return camera, center
+
+def setup_camera_at_origin_with_distance(selected_angle, distance):
+    """원점을 중심으로 고정 거리로 카메라 배치"""
+    center = Vector((0, 0, 0))
+    # setup_camera 내부에서 camera_distance = max_dim * 0.9 를 쓰므로, 원하는 distance를 만들기 위해 size를 distance/0.9로 설정
+    fake_size = Vector((distance / 0.9, distance / 0.9, distance / 0.9))
+    camera = setup_camera(center, fake_size, "Camera_Diagonal", selected_angle)
+    return camera, center
+
 def create_plane_with_textures(tex_dir, dataset_id, plane_size):
     """텍스처가 적용된 평면 생성"""
-    # 텍스처 파일 찾기 (인라인)
-    def find_texture(texture_type):
-        pattern = str(tex_dir / f"{texture_type}.*")
-        matches = glob.glob(pattern)
-        if matches:
-            return matches[0]
-        else:
-            raise FileNotFoundError(f"No texture file found for pattern: {pattern}")
-    
-    color_path = find_texture("diff")
-    roughness_path = find_texture("rou") 
-    normal_path = find_texture("nor")
+    color_path = find_texture(tex_dir, "diff")
+    roughness_path = find_texture(tex_dir, "rou") 
+    normal_path = find_texture(tex_dir, "nor")
 
     # 평면 생성
     bpy.ops.mesh.primitive_plane_add(size=plane_size, location=(0, 0, 0))
@@ -486,7 +575,14 @@ def place_all_objects(glb_paths, args, target_max_dim_glb, target_max_dim_primit
             current_dim = calculate_object_dimensions(parent_object)
             target_dim = target_max_dim_glb if obj_type == 'glb' else target_max_dim_primitive
             scale_factor = target_dim / current_dim if current_dim > 0 else 1.0
-            parent_object.scale = (scale_factor, scale_factor, scale_factor)
+            
+            # 기존 스케일에 스케일 팩터를 곱해서 적용
+            original_scale = parent_object.scale
+            parent_object.scale = (
+                original_scale[0] * scale_factor,
+                original_scale[1] * scale_factor,
+                original_scale[2] * scale_factor
+            )
             
             # insert_object.py 방식으로 회전 적용
             random_rotation = random.uniform(0, 2 * math.pi)
@@ -516,26 +612,43 @@ def place_all_objects(glb_paths, args, target_max_dim_glb, target_max_dim_primit
                 # Primitive 객체의 경우 기존 방식 유지
                 parent_object.rotation_euler = Euler((0, 0, random_rotation), 'XYZ')
             
-            # 위치 찾기
-            current_target = target_max_dim_glb if obj_type == 'glb' else target_max_dim_primitive
-            actual_scale = scale_factor * current_target
+            # 스케일링 후 실제 메시 크기 계산을 위해 임시 배치
+            parent_object.location = (0, 0, 0)
+            bpy.context.view_layer.update()  # 스케일링 반영
             
-            # 겹치지 않는 위치 찾기 (기존 로직 재사용)
+            # 실제 스케일링된 객체의 크기 계산
+            actual_dimensions = calculate_object_dimensions(parent_object)
+            
+            # 겹치지 않는 위치 찾기
+            
             max_attempts = 30
             for attempt in range(max_attempts):
                 x_pos = random.uniform(-plane_size/2 + safe_margin, plane_size/2 - safe_margin)
                 y_pos = random.uniform(-plane_size/2 + safe_margin, plane_size/2 - safe_margin)
                 
-                min_distance = actual_scale * 1.5
-                too_close = any(
-                    math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2) < min_distance
-                    for prev_x, prev_y in placed_positions
-                )
+                # 각 기존 객체와의 거리 계산
+                too_close = False
+                for pos_info in placed_positions:
+                    if len(pos_info) == 3:  # (x, y, size)
+                        prev_x, prev_y, prev_obj_size = pos_info
+                        distance = math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2)
+                        required_distance = (actual_dimensions + prev_obj_size) * 0.75
+                        if distance < required_distance:
+                            too_close = True
+                            break
+                    else:  # 이전 형식 호환성 (x, y)
+                        prev_x, prev_y = pos_info
+                        distance = math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2)
+                        required_distance = actual_dimensions * 1.5
+                        if distance < required_distance:
+                            too_close = True
+                            break
                 
-                obj_radius = actual_scale * 0.6
-                if (not too_close and 
-                    abs(x_pos) + obj_radius <= plane_size/2 - safe_margin and 
-                    abs(y_pos) + obj_radius <= plane_size/2 - safe_margin):
+                obj_radius = actual_dimensions * 0.6
+                boundary_check = (abs(x_pos) + obj_radius <= plane_size/2 - safe_margin and 
+                                 abs(y_pos) + obj_radius <= plane_size/2 - safe_margin)
+                
+                if not too_close and boundary_check:
                     break
             
             # 적절한 위치를 못 찾으면 더 안전한 위치 사용
@@ -543,157 +656,224 @@ def place_all_objects(glb_paths, args, target_max_dim_glb, target_max_dim_primit
                 x_pos = random.uniform(-plane_size/3, plane_size/3)
                 y_pos = random.uniform(-plane_size/3, plane_size/3)
             
-            placed_positions.append((x_pos, y_pos))
+            # 실제 크기 정보도 함께 저장 (chrome ball insertion에서 사용)
+            placed_positions.append((x_pos, y_pos, actual_dimensions))
             
             # 객체를 평면 위에 배치
             place_object_on_plane(parent_object, plane, x_pos, y_pos)
             
-            print(f"Object {i+1}: type='{obj_type}', name='{parent_object.name}', scale: {scale_factor:.3f}, position: ({x_pos:.2f}, {y_pos:.2f}, {parent_object.location.z:.2f}), rotation: {math.degrees(random_rotation):.1f}°")
+            print(f"Placed {obj_type} '{parent_object.name}' at ({x_pos:.2f}, {y_pos:.2f}, {parent_object.location.z:.2f})")
         else:
             print(f"Object {i+1}: No parent object found for {obj_type}: {obj_data}")
     
     return placed_positions, glb_object_to_file
 
+def prepare_glb_insertion_object(glb_object_to_file):
+    """GLB insertion object 정보를 미리 준비 (렌더링 전 가시성 체크용)"""
+    if not glb_object_to_file:
+        print("Warning: No GLB objects available for insertion")
+        return None
+    
+    # 랜덤하게 GLB 객체 선택 (object_name -> filename 매핑)
+    target_name, target_file = random.choice(list(glb_object_to_file.items()))
+    parent_object = bpy.data.objects.get(target_name)
+    
+    if not parent_object:
+        print(f"Warning: Object {target_name} not found in scene")
+        return None
+    
+    print(f"Selected GLB object for insertion: {target_name}, file: {target_file}, position: ({parent_object.location.x:.2f}, {parent_object.location.y:.2f})")
+    
+    # 객체 정보를 dict로 반환
+    return {
+        "name": target_name,
+        "file": target_file,
+        "location": [parent_object.location.x, parent_object.location.y, parent_object.location.z],
+        "rotation": list(parent_object.rotation_euler),
+        "scale": list(parent_object.scale)
+    }
 
+def render_insertion_scenes(args, dataset_dir, camera, insertion_object):
+    """Insertion object 렌더링 (chrome ball 또는 GLB object)"""
+    if args.use_chrome_ball:
+        render_chrome_ball_scenes(args, dataset_dir, camera, insertion_object)
+    else:
+        render_glb_scenes(args, dataset_dir, camera, insertion_object)
 
+def render_chrome_ball_scenes(args, dataset_dir, camera, insertion_object):
+    """Chrome ball 렌더링"""
+    # AFTER: chrome ball과 함께
+    render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
+    
+    # OBJECT ONLY: chrome ball만
+    hidden_objects = []
+    for obj in bpy.data.objects:
+        if obj != insertion_object and obj != camera and obj.type in ['MESH', 'EMPTY']:
+            if not obj.hide_render:
+                obj.hide_render = True
+                hidden_objects.append(obj)
+    
+    bpy.context.scene.render.film_transparent = True
+    render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
+    
+    # 다른 객체들 다시 보이게 하기
+    for obj in hidden_objects:
+        obj.hide_render = False
+    
+    # BEFORE: chrome ball 숨김
+    insertion_object.hide_render = True
+    bpy.context.scene.render.film_transparent = False
+    render_scene(camera, f"{args.dataset_id}_before.png", dataset_dir)
 
+def render_glb_scenes(args, dataset_dir, camera, insertion_object):
+    """GLB object 렌더링"""
+    # AFTER: 모든 객체
+    render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
+    
+    # GLB 객체 숨기기
+    hidden_object_info = hide_selected_glb_object(insertion_object)
+    
+    if hidden_object_info:
+        # OBJECT ONLY
+        render_glb_object_only(camera, insertion_object, dataset_dir, args)
+        
+        # OBJECT ONLY 이후: 모든 객체 다시 보이게 복원
+        for obj in bpy.data.objects:
+            if obj != camera:
+                obj.hide_render = False
+        
+        # BEFORE: 인서션 오브젝트(및 자식)만 숨기고 렌더
+        insertion_object_name = insertion_object.get('name') if isinstance(insertion_object, dict) else None
+        insertion_obj = bpy.data.objects.get(insertion_object_name) if insertion_object_name else None
+        if insertion_obj:
+            insertion_objects = []
+            if insertion_obj.type == 'EMPTY':
+                def collect_all_children(obj):
+                    insertion_objects.append(obj)
+                    for child in obj.children:
+                        collect_all_children(child)
+                collect_all_children(insertion_obj)
+            else:
+                insertion_objects.append(insertion_obj)
+            for obj in insertion_objects:
+                obj.hide_render = True
+        
+        bpy.context.scene.render.film_transparent = False
+        render_scene(camera, f"{args.dataset_id}_before.png", dataset_dir)
+
+def render_scenes_with_prepared_camera(args, dataset_dir, camera, insertion_object, selected_angle, center, glb_object_to_file):
+    """이미 준비된 카메라와 insertion object로 씬 렌더링"""
+    render_insertion_scenes(args, dataset_dir, camera, insertion_object)
+    print(f"Selected diagonal angle: {selected_angle}")
+    print("Object insertion dataset completed!")
+    return camera, insertion_object, selected_angle, center
+
+def hide_selected_glb_object(insertion_object):
+    """선택된 GLB 객체를 숨기기"""
+    if not insertion_object or 'name' not in insertion_object:
+        return None
+    
+    target_name = insertion_object['name']
+    target_object = bpy.data.objects.get(target_name)
+    
+    if not target_object:
+        print(f"Warning: Object {target_name} not found")
+        return None
+    
+    print(f"Selected GLB object for hiding: {target_name}, file: {insertion_object['file']}, position: ({target_object.location.x:.2f}, {target_object.location.y:.2f})")
+    
+    # 선택된 객체와 모든 자식 객체들을 찾아서 렌더링에서 숨기기
+    objects_to_hide = []
+    if target_object.type == 'EMPTY':
+        def collect_all_children(obj):
+            objects_to_hide.append(obj)
+            for child in obj.children:
+                collect_all_children(child)
+        collect_all_children(target_object)
+    else:
+        objects_to_hide.append(target_object)
+    
+    # 객체들 숨기기
+    hidden_count = 0
+    for obj in objects_to_hide:
+        if not obj.hide_render:
+            obj.hide_render = True
+            hidden_count += 1
+            print(f"Hiding object from render: {obj.name}")
+    
+    print(f"GLB object hidden successfully. Total {hidden_count} objects hidden.")
+    return insertion_object
+
+def render_glb_object_only(camera, insertion_object, dataset_dir, args):
+    """GLB insertion object만 렌더링"""
+    if not insertion_object or 'name' not in insertion_object:
+        print("Warning: No insertion object to render")
+        return
+    
+    insertion_object_name = insertion_object['name']
+    insertion_obj = bpy.data.objects.get(insertion_object_name)
+    
+    if insertion_obj:
+        print(f"Found insertion object: {insertion_object_name}, type: {insertion_obj.type}")
+        
+        # insertion object와 관련된 모든 객체들 찾기
+        insertion_objects = []
+        if insertion_obj.type == 'EMPTY':
+            def collect_all_children(obj):
+                insertion_objects.append(obj)
+                for child in obj.children:
+                    collect_all_children(child)
+            collect_all_children(insertion_obj)
+        else:
+            insertion_objects.append(insertion_obj)
+        
+        # insertion object들 보이게 하기
+        for obj in insertion_objects:
+            if obj.hide_render:
+                obj.hide_render = False
+                print(f"Showing insertion object: {obj.name}")
+        
+        # 다른 모든 객체들 숨기기
+        for obj in bpy.data.objects:
+            if obj not in insertion_objects and obj != camera and obj.type in ['MESH', 'EMPTY', 'CURVE', 'SURFACE', 'META', 'FONT', 'HAIR', 'POINTCLOUD', 'VOLUME', 'GPENCIL']:
+                if not obj.hide_render:
+                    obj.hide_render = True
+                    print(f"Hiding object: {obj.name}")
+        
+        # 투명 배경으로 설정
+        bpy.context.scene.render.film_transparent = True
+        print("Set film_transparent = True for object-only render")
+        
+        # OBJECT 렌더링
+        render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
+        print(f"Rendered GLB insertion object only (OBJECT): {args.dataset_id}_object.png")
+    else:
+        print(f"Warning: Insertion object {insertion_object_name} not found in scene")
 
 def render_scenes(args, dataset_dir, placed_positions, glb_object_to_file, plane_size, safe_margin):
     """씬 렌더링 (before/after)"""
-    # 씬 바운드 계산
+    # 씬 바운드 계산 및 카메라 설정
     center, size = calculate_scene_bounds()
-    print(f"Scene center: {center}, Scene size: {size}")
-
-    # 다양한 대각선 각도 정의
+    center = Vector((0, 0, 0))
+    
     diagonal_angles = [
         (1.5, 1.5, 1.2), (-1.5, 1.5, 1.2), (1.5, -1.5, 1.2), (-1.5, -1.5, 1.2),
-        (2.0, 1.0, 1.5), (-2.0, 1.0, 1.5), (1.0, 2.0, 1.5), (-1.0, -2.0, 1.5),
         (1.8, 0.8, 0.8), (-1.8, 0.8, 0.8), (0.8, 1.8, 0.8), (-0.8, -1.8, 0.8),
     ]
-
-    # 랜덤으로 대각선 각도 선택
+    
     selected_angle = random.choice(diagonal_angles)
-
-    # 카메라 한 번만 생성
+    selected_angle = (selected_angle[0], selected_angle[1], selected_angle[2] - 0.5)
     camera = setup_camera(center, size, "Camera_Diagonal", selected_angle)
 
-    # 1. 먼저 insertion object 준비 (chrome ball 추가 또는 GLB 객체 제거)
+    # Insertion object 생성
     insertion_object = None
-    
     if args.use_chrome_ball:
-        print("Selected insertion type: Chrome Ball")
         insertion_object = add_chrome_ball_insertion_object(placed_positions, plane_size, safe_margin)
-        
-        # AFTER: chrome ball이 있는 상태 렌더링 (원본)
-        render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
-        print(f"Rendered scene with Chrome Ball (AFTER): {args.dataset_id}_after.png")
-        
-        # OBJECT ONLY: chrome ball만 보이도록 다른 모든 객체 숨기기
-        hidden_objects = []
-        for obj in bpy.data.objects:
-            if obj != insertion_object and obj != camera and obj.type in ['MESH', 'EMPTY']:
-                if not obj.hide_render:
-                    obj.hide_render = True
-                    hidden_objects.append(obj)
-                    print(f"Hiding object: {obj.name}")
-        
-        # 배경을 투명하게 설정
-        bpy.context.scene.render.film_transparent = True
-        print("Set film_transparent = True for chrome ball render")
-        
-        render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
-        print(f"Rendered Chrome Ball only (OBJECT): {args.dataset_id}_object.png")
-        
-        # 배경 투명도 원상복구
-        bpy.context.scene.render.film_transparent = False
-        
-        # 숨겼던 객체들 다시 보이게 하기
-        for obj in hidden_objects:
-            obj.hide_render = False
-        
-        # chrome ball 렌더링에서 숨기기
-        insertion_object.hide_render = True
-        
-        # BEFORE: chrome ball이 숨겨진 상태 렌더링 (편집됨)
-        render_scene(camera, f"{args.dataset_id}_before.png", dataset_dir)
-        print(f"Rendered scene without Chrome Ball (BEFORE): {args.dataset_id}_before.png")
-        
     else:
-        print("Selected insertion type: GLB Object (default)")
-        
-        # AFTER: 모든 GLB 객체가 있는 원본 상태 렌더링 (원본)
-        render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
-        print(f"Rendered original scene with all objects (AFTER): {args.dataset_id}_after.png")
-        
-        # GLB 객체 숨기기
-        hidden_object_info = hide_glb_object_for_insertion(glb_object_to_file)
-        insertion_object = hidden_object_info
-        
-        if insertion_object:
-            # OBJECT ONLY: insertion object만 보이도록 다른 모든 객체 숨기기
-            # 먼저 숨겨진 insertion object를 다시 보이게 함
-            insertion_object_name = insertion_object['name']
-            insertion_obj = bpy.data.objects.get(insertion_object_name)
-            
-            if insertion_obj:
-                print(f"Found insertion object: {insertion_object_name}, type: {insertion_obj.type}")
-                
-                # insertion object와 관련된 모든 객체들 찾기
-                insertion_objects = []
-                if insertion_obj.type == 'EMPTY':
-                    def collect_all_children(obj):
-                        insertion_objects.append(obj)
-                        for child in obj.children:
-                            collect_all_children(child)
-                    collect_all_children(insertion_obj)
-                else:
-                    insertion_objects.append(insertion_obj)
-                
-                # 모든 insertion object들 보이게 하기
-                for obj in insertion_objects:
-                    obj.hide_render = False
-                    print(f"Showing insertion object: {obj.name}")
-                
-                # 다른 모든 객체 숨기기 (insertion object 제외)
-                hidden_objects = []
-                for obj in bpy.data.objects:
-                    if (obj not in insertion_objects and 
-                        obj != camera and 
-                        obj.type in ['MESH', 'EMPTY'] and 
-                        not obj.hide_render):
-                        obj.hide_render = True
-                        hidden_objects.append(obj)
-                        print(f"Hiding object: {obj.name}")
-                
-                # 배경을 투명하게 설정
-                bpy.context.scene.render.film_transparent = True
-                print("Set film_transparent = True for object-only render")
-                
-                render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
-                print(f"Rendered GLB insertion object only (OBJECT): {args.dataset_id}_object.png")
-                
-                # 배경 투명도 원상복구
-                bpy.context.scene.render.film_transparent = False
-                
-                # 숨겼던 객체들 다시 보이게 하기
-                for obj in hidden_objects:
-                    obj.hide_render = False
-                
-                # insertion object들 다시 숨기기
-                for obj in insertion_objects:
-                    obj.hide_render = True
-            else:
-                print(f"Warning: Insertion object '{insertion_object_name}' not found in scene")
-        
-        # BEFORE: GLB 객체가 숨겨진 상태 렌더링 (편집됨)
-        if insertion_object:
-            render_scene(camera, f"{args.dataset_id}_before.png", dataset_dir)
-            print(f"Rendered scene with GLB Object hidden (BEFORE) - hidden: {hidden_object_info['name']}: {args.dataset_id}_before.png")
-        else:
-            print("Warning: Failed to hide GLB object")
-
-    print(f"Selected diagonal angle: {selected_angle}")
-    print("Object insertion dataset completed!")
+        insertion_object = hide_glb_object_for_insertion(glb_object_to_file)
+    
+    # 렌더링 수행
+    render_insertion_scenes(args, dataset_dir, camera, insertion_object)
     
     return camera, insertion_object, selected_angle, center
 
@@ -713,12 +893,137 @@ def world_to_pixel_coordinates(world_location, camera, scene):
     
     return pixel_x, pixel_y, depth
 
-def save_metadata(args, dataset_dir, camera, insertion_object, selected_angle, center):
+def check_insertion_object_visibility(camera, insertion_object, args):
+    """insertion object가 카메라에서 봤을 때 다른 객체에 가려지는지 확인"""
+    # insertion object의 위치 가져오기
+    if args.use_chrome_ball:
+        if insertion_object is None:
+            return False
+        target_location = insertion_object.location
+    else:
+        if insertion_object is None or 'location' not in insertion_object:
+            return False
+        target_location = Vector(insertion_object['location'])
+    
+    # 레이캐스팅으로 가림 체크
+    camera_location = camera.location
+    direction = target_location - camera_location
+    distance = direction.length
+    direction.normalize()
+    
+    bpy.context.view_layer.update()
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    
+    ray_start = camera_location + direction * 0.1
+    result, location, normal, index, obj, matrix = bpy.context.scene.ray_cast(
+        depsgraph, ray_start, direction, distance=distance - 0.2
+    )
+    
+    if result:
+        # 여러 샘플 포인트에서 추가 체크
+        occlusion_count = 1
+        total_samples = 5
+        
+        for i in range(total_samples - 1):
+            offset = Vector((
+                random.uniform(-0.1, 0.1),
+                random.uniform(-0.1, 0.1),
+                random.uniform(-0.05, 0.05)
+            ))
+            sample_target = target_location + offset
+            sample_direction = sample_target - camera_location
+            sample_distance = sample_direction.length
+            sample_direction.normalize()
+            
+            sample_result, _, _, _, _, _ = bpy.context.scene.ray_cast(
+                depsgraph, camera_location + sample_direction * 0.1, sample_direction, distance=sample_distance - 0.1
+            )
+            
+            if sample_result:
+                occlusion_count += 1
+        
+        occlusion_percentage = (occlusion_count / total_samples) * 100
+        return occlusion_percentage < 60  # 60% 미만 가림은 허용
+    
+    return True
+
+def relocate_insertion_object_if_occluded(camera, insertion_object, placed_positions, plane_size, safe_margin, args):
+    """가려진 insertion object를 가시성이 확보될 때까지 재배치"""
+    if insertion_object is None:
+        return False
+    
+    # Chrome ball vs GLB object 구분 및 원본 z값 저장
+    if args.use_chrome_ball:
+        actual_object = insertion_object
+        if not hasattr(actual_object, 'location'):
+            return False
+        original_z = actual_object.location.z
+        min_distance = 0.6  # sphere_scale * 2.0
+    else:
+        if not isinstance(insertion_object, dict) or 'name' not in insertion_object:
+            return False
+        actual_object = bpy.data.objects.get(insertion_object['name'])
+        if actual_object is None:
+            return False
+        original_z = actual_object.location.z
+        min_distance = 1.0
+    
+    max_relocation_attempts = 200
+    
+    for attempt in range(max_relocation_attempts):
+        # 새로운 위치 생성
+        x_pos = random.uniform(-plane_size/2 + safe_margin, plane_size/2 - safe_margin)
+        y_pos = random.uniform(-plane_size/2 + safe_margin, plane_size/2 - safe_margin)
+        
+        # 기존 객체들과의 거리 체크
+        too_close = False
+        for pos_info in placed_positions:
+            if len(pos_info) >= 3:
+                prev_x, prev_y, prev_obj_size = pos_info[:3]
+                distance = math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2)
+                required_distance = (min_distance + prev_obj_size) * 0.75
+                if distance < required_distance:
+                    too_close = True
+                    break
+        
+        if too_close:
+            continue
+        
+        # insertion object를 새 위치로 이동 (z값은 원본 유지)
+        actual_object.location.x = x_pos
+        actual_object.location.y = y_pos
+        actual_object.location.z = original_z
+        
+        # GLB object의 경우 dict 정보도 업데이트
+        if not args.use_chrome_ball:
+            insertion_object['location'] = [actual_object.location.x, actual_object.location.y, actual_object.location.z]
+        
+        bpy.context.view_layer.update()
+        
+        # 가시성 체크
+        if check_insertion_object_visibility(camera, insertion_object, args):
+            print(f"Relocated insertion object to visible position after {attempt + 1} attempts")
+            return True
+    
+    print(f"Could not find visible position after {max_relocation_attempts} attempts")
+    return False
+
+def perform_visibility_check(camera, insertion_object, args):
+    """가시성 체크 수행 및 결과 출력"""
+    is_visible = check_insertion_object_visibility(camera, insertion_object, args)
+    print(f"Insertion object visibility: {'VISIBLE' if is_visible else 'OCCLUDED'}")
+    return is_visible
+
+def save_metadata(args, dataset_dir, camera, insertion_object, selected_angle, center, is_visible=None):
     """메타데이터 저장"""
     metadata = {
         "camera_location": list(camera.location),
         "camera_rotation": [math.degrees(r) for r in camera.rotation_euler],
-        "insertion_object": None
+        "insertion_object": None,
+        "visibility_check": {
+            "is_visible": is_visible,
+            "checked": is_visible is not None
+        }
     }
     
     # 제거된 객체 정보 저장
@@ -763,83 +1068,54 @@ def save_metadata(args, dataset_dir, camera, insertion_object, selected_angle, c
 def main():
     args = parse_args()
     
-    # 디렉토리 및 파일 경로 설정 (인라인)
-    root_dir = Path("/Users/jinwoo/Documents/work/svoi")
-    dataset_dir = root_dir / "dataset" / args.dataset_id
-    tex_dir = dataset_dir / "textures"
-    
-    # 디렉토리 존재 확인
-    if not dataset_dir.exists():
-        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
-    if not tex_dir.exists():
-        raise FileNotFoundError(f"Texture directory not found: {tex_dir}")
-    
-    # GLB 파일 경로 확인
-    glb_paths = [dataset_dir / f"{i}.glb" for i in range(1, 4)]
-    for glb_path in glb_paths:
-        if not glb_path.exists():
-            raise FileNotFoundError(f"GLB file not found: {glb_path}")
+    # 경로 설정 및 검증
+    dataset_dir, tex_dir, glb_paths = setup_paths_and_validation(args)
     
     # 씬 초기화 및 평면 생성
     clear_scene()
     plane = create_plane_with_textures(tex_dir, args.dataset_id, args.plane_size)
 
-    # 객체 리스트 생성 및 배치
+    # 카메라 각도 선택 (객체 배치 전에 미리 선택)
+    selected_angle = select_camera_angle()
+
+    # 카메라 실제 배치 (원점 기준 고정 거리)
+    # plane 크기를 기준으로 적당한 여유를 두고 배치 (가까이 조정)
+    camera_distance = max(args.plane_size * 0.9, 2.5)
+    camera, center = setup_camera_at_origin_with_distance(selected_angle, camera_distance)
+
+    # 객체 배치
     placed_positions, glb_object_to_file = place_all_objects(
         glb_paths, args, args.glb_max_size, args.primitive_max_size, args.plane_size, args.safe_margin, plane
     )
+    
+    # 평면 스케일 변경
+    plane.scale = (200, 200, 1)
+    
+    # 환경 및 렌더 설정
+    setup_world_environment(dataset_dir)
+    setup_render_settings(args.render_samples)
 
-    # 환경 설정 (인라인)
-    world = bpy.context.scene.world
-    world.use_nodes = True
-    world_nodes = world.node_tree.nodes
-    world_links = world.node_tree.links
-
-    # 기존 노드들 제거
-    for node in world_nodes:
-        world_nodes.remove(node)
-
-    # World Output 노드 추가
-    world_output = world_nodes.new(type='ShaderNodeOutputWorld')
-    world_output.location = (300, 0)
-
-    # Environment Texture 노드 추가
-    env_tex = world_nodes.new(type='ShaderNodeTexEnvironment')
-    env_tex.location = (0, 0)
-
-    # Environment Texture 이미지 로드
-    envmap_pattern = str(dataset_dir / "envmap.*")
-    envmap_matches = glob.glob(envmap_pattern)
-    if envmap_matches:
-        env_image_path = envmap_matches[0]
-        env_tex.image = bpy.data.images.load(env_image_path)
-        print(f"World environment map loaded: {env_image_path}")
-        
-        # Environment Texture을 World Output에 연결
-        world_links.new(env_tex.outputs['Color'], world_output.inputs['Surface'])
-        
-        # 환경맵 이미지 패킹
-        if env_tex.image and not env_tex.image.packed_file:
-            env_tex.image.pack()
-            print(f"Environment map packed: {env_image_path}")
+    # Insertion object 준비
+    if args.use_chrome_ball:
+        insertion_object = add_chrome_ball_insertion_object(placed_positions, args.plane_size, args.safe_margin)
     else:
-        raise FileNotFoundError(f"Environment map not found in {dataset_dir}/")
+        insertion_object = prepare_glb_insertion_object(glb_object_to_file)
+    
+    # 가시성 체크 및 재배치
+    is_visible = perform_visibility_check(camera, insertion_object, args)
+    if not is_visible:
+        is_visible = relocate_insertion_object_if_occluded(
+            camera, insertion_object, placed_positions, args.plane_size, args.safe_margin, args
+        )
 
-    # 렌더 설정 (인라인)
-    bpy.context.scene.render.engine = 'CYCLES'
-    bpy.context.scene.cycles.samples = args.render_samples
-    bpy.context.scene.cycles.preview_samples = args.render_samples
-    print(f"Render engine set to Cycles with {args.render_samples} samples")
-
-    # 씬 렌더링
-    camera, insertion_object, selected_angle, center = render_scenes(
-        args, dataset_dir, placed_positions, glb_object_to_file, args.plane_size, args.safe_margin
+    # 렌더링
+    camera, insertion_object, selected_angle, center = render_scenes_with_prepared_camera(
+        args, dataset_dir, camera, insertion_object, selected_angle, center, glb_object_to_file
     )
 
-    # 메타데이터 저장
-    save_metadata(args, dataset_dir, camera, insertion_object, selected_angle, center)
-
-    # 블렌더 파일 저장
+    # 메타데이터 저장 및 블렌더 파일 저장
+    save_metadata(args, dataset_dir, camera, insertion_object, selected_angle, center, is_visible)
+    
     blend_path = dataset_dir / f"{args.dataset_id}.blend"
     if blend_path.exists():
         blend_path.unlink()
