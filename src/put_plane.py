@@ -431,6 +431,10 @@ def create_plane_with_textures(tex_dir, dataset_id, plane_size):
     output.location = (200, 0)
 
     # 노드 연결
+    links.new(tex_coord.outputs['UV'], mapping.inputs['Vector'])
+    links.new(mapping.outputs['Vector'], tex_image_color.inputs['Vector'])
+    links.new(mapping.outputs['Vector'], tex_image_rough.inputs['Vector'])
+    links.new(mapping.outputs['Vector'], tex_image_normal.inputs['Vector'])
     links.new(tex_image_color.outputs['Color'], bsdf.inputs['Base Color'])
     links.new(tex_image_rough.outputs['Color'], bsdf.inputs['Roughness'])
     links.new(tex_image_normal.outputs['Color'], normal_map.inputs['Color'])
@@ -449,6 +453,18 @@ def create_plane_with_textures(tex_dir, dataset_id, plane_size):
             image.pack()
     
     return plane
+
+def adjust_plane_material_scale(plane, scale_factor):
+    """평면의 머티리얼 UV 스케일을 조정하여 텍스처 크기를 유지"""
+    if plane.data.materials:
+        mat = plane.data.materials[0]
+        if mat and mat.use_nodes:
+            for node in mat.node_tree.nodes:
+                if node.name == 'Mapping':
+                    node.inputs['Scale'].default_value = (scale_factor[0], scale_factor[1], 1)
+                    print(f"Adjusted Plane material UV scale to: {scale_factor}")
+                    return
+    print("Warning: Could not find Mapping node in Plane material or no material found.")
 
 def create_object_list(glb_paths, args):
     """GLB 파일들과 primitive 객체들을 섞어서 배치할 리스트 생성"""
@@ -705,20 +721,23 @@ def render_chrome_ball_scenes(args, dataset_dir, camera, insertion_object):
     # AFTER: chrome ball과 함께
     render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
     
-    # OBJECT ONLY: chrome ball만
+    # OBJECT ONLY: chrome ball만 (다른 객체들은 카메라에서만 숨기기)
     hidden_objects = []
     for obj in bpy.data.objects:
         if obj != insertion_object and obj != camera and obj.type in ['MESH', 'EMPTY']:
             if not obj.hide_render:
-                obj.hide_render = True
+                # 카메라에서만 숨기기 (반사는 유지)
+                obj.visible_camera = False
                 hidden_objects.append(obj)
+                print(f"Hidden from camera (keeping reflections): {obj.name}")
     
     bpy.context.scene.render.film_transparent = True
     render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
     
-    # 다른 객체들 다시 보이게 하기
+    # 카메라 가시성 복원
     for obj in hidden_objects:
-        obj.hide_render = False
+        obj.visible_camera = True
+        print(f"Restored camera visibility: {obj.name}")
     
     # BEFORE: chrome ball 숨김
     insertion_object.hide_render = True
@@ -833,12 +852,14 @@ def render_glb_object_only(camera, insertion_object, dataset_dir, args):
                 obj.hide_render = False
                 print(f"Showing insertion object: {obj.name}")
         
-        # 다른 모든 객체들 숨기기
+        # 다른 모든 객체들을 카메라에서만 숨기기 (반사는 유지)
+        hidden_objects = []
         for obj in bpy.data.objects:
             if obj not in insertion_objects and obj != camera and obj.type in ['MESH', 'EMPTY', 'CURVE', 'SURFACE', 'META', 'FONT', 'HAIR', 'POINTCLOUD', 'VOLUME', 'GPENCIL']:
                 if not obj.hide_render:
-                    obj.hide_render = True
-                    print(f"Hiding object: {obj.name}")
+                    obj.visible_camera = False
+                    hidden_objects.append(obj)
+                    print(f"Hidden from camera (keeping reflections): {obj.name}")
         
         # 투명 배경으로 설정
         bpy.context.scene.render.film_transparent = True
@@ -847,6 +868,11 @@ def render_glb_object_only(camera, insertion_object, dataset_dir, args):
         # OBJECT 렌더링
         render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
         print(f"Rendered GLB insertion object only (OBJECT): {args.dataset_id}_object.png")
+        
+        # 카메라 가시성 복원
+        for obj in hidden_objects:
+            obj.visible_camera = True
+            print(f"Restored camera visibility: {obj.name}")
     else:
         print(f"Warning: Insertion object {insertion_object_name} not found in scene")
 
@@ -1088,8 +1114,14 @@ def main():
         glb_paths, args, args.glb_max_size, args.primitive_max_size, args.plane_size, args.safe_margin, plane
     )
     
-    # 평면 스케일 변경
-    plane.scale = (200, 200, 1)
+    # 평면 스케일 변경 (material UV scale도 함께 보정)
+    original_scale = plane.scale.copy()
+    new_scale = (200, 200, 1)
+    plane.scale = new_scale
+    
+    # Material UV scale 보정 (평면이 확대된 만큼 UV도 확대하여 텍스처 크기 유지)
+    scale_factor = (new_scale[0] / original_scale[0], new_scale[1] / original_scale[1])
+    adjust_plane_material_scale(plane, scale_factor)
     
     # 환경 및 렌더 설정
     setup_world_environment(dataset_dir)
