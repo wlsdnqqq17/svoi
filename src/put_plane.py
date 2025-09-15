@@ -234,8 +234,11 @@ def hide_glb_object_for_insertion(glb_object_to_file):
         print("Warning: No GLB objects found in scene")
         return None
     
-    # 랜덤으로 GLB 객체 선택
-    target_object = random.choice(glb_objects)
+    # 3.glb 우선 선택
+    preferred_objects = [obj for obj in glb_objects if glb_object_to_file.get(obj.name) == "3.glb"]
+    if not preferred_objects:
+        raise ValueError("Required insertion object '3.glb' not found in scene")
+    target_object = preferred_objects[0]
     target_name = target_object.name
     target_file = glb_object_to_file.get(target_name, "unknown.glb")
     
@@ -690,8 +693,11 @@ def prepare_glb_insertion_object(glb_object_to_file):
         print("Warning: No GLB objects available for insertion")
         return None
     
-    # 랜덤하게 GLB 객체 선택 (object_name -> filename 매핑)
-    target_name, target_file = random.choice(list(glb_object_to_file.items()))
+    # 3.glb 우선 선택 (object_name -> filename 매핑)
+    candidates = [(name, file) for name, file in glb_object_to_file.items() if file == "3.glb"]
+    if not candidates:
+        raise ValueError("Required insertion object mapping for '3.glb' not found")
+    target_name, target_file = candidates[0]
     parent_object = bpy.data.objects.get(target_name)
     
     if not parent_object:
@@ -1007,7 +1013,7 @@ def relocate_insertion_object_if_occluded(camera, insertion_object, placed_posit
             if len(pos_info) >= 3:
                 prev_x, prev_y, prev_obj_size = pos_info[:3]
                 distance = math.sqrt((x_pos - prev_x)**2 + (y_pos - prev_y)**2)
-                required_distance = (min_distance + prev_obj_size) * 0.75
+                required_distance = (min_distance + prev_obj_size) * 0.8
                 if distance < required_distance:
                     too_close = True
                     break
@@ -1106,7 +1112,8 @@ def main():
 
     # 카메라 실제 배치 (원점 기준 고정 거리)
     # plane 크기를 기준으로 적당한 여유를 두고 배치 (가까이 조정)
-    camera_distance = max(args.plane_size * 0.9, 2.5)
+    camera_distance = max(args.plane_size * 0.8, 2.5)
+    print(f"Camera distance: {camera_distance}")
     camera, center = setup_camera_at_origin_with_distance(selected_angle, camera_distance)
 
     # 객체 배치

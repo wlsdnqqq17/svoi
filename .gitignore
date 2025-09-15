@@ -3,6 +3,7 @@ dataset_legacy
 input
 HDRIs
 textures
+objs
 out
 
 .DS_Store
