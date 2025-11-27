@@ -10,5 +10,4 @@ src/legacy/
 .DS_Store
 metrics_table.csv
 .zed/settings.json
-src/__pycache__/csv.cpython-311.pyc
-src/__pycache__/crop_and_compare.cpython-311.pyc
+src/__pycache__/
