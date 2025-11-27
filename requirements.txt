@@ -3,3 +3,4 @@ opencv-python
 mathutils
 objaverse
 pymeshlab
+lpips
