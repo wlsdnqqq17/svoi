@@ -1,10 +1,14 @@
 dataset
 dataset_legacy
 input
+HDRIs
+textures
+objs
 out
+src/legacy/
 
 .DS_Store
-
-src/plane.blend
-src/plane2.blend
-src/plane2.blend1
+metrics_table.csv
+.zed/settings.json
+src/__pycache__/csv.cpython-311.pyc
+src/__pycache__/crop_and_compare.cpython-311.pyc

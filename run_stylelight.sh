@@ -3,14 +3,12 @@
 echo -n "Enter experiment number (e.g. 001, 002, ...): "
 read -r EXPERIMENT_NUM
 
-if [ -f "dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.png" ]; then
-    scp "dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.png" "gpu-server:DiffusionLight/imgs/${EXPERIMENT_NUM}.png"
-    echo "Image sent: ${EXPERIMENT_NUM}_before.png"
-elif [ -f "dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.jpg" ]; then
-    scp "dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.jpg" "gpu-server:DiffusionLight/imgs/${EXPERIMENT_NUM}.png"
+echo "=== Image file transfer in progress ==="
+if [ -f "dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.jpg" ]; then
+    scp "dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.jpg" "gpu-server:StyleLight/assets/wild2/${EXPERIMENT_NUM}.jpg"
     echo "Image sent: ${EXPERIMENT_NUM}_before.jpg"
 else
-    echo "Error: Neither dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.png nor dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.jpg file found."
+    echo "Error: dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_before.jpg file not found."
     exit 1
 fi
 
@@ -26,9 +24,9 @@ read -r CONFIRM
 
 if [[ "$CONFIRM" == "y" ]] || [[ "$CONFIRM" == "Y" ]] || [[ "$CONFIRM" == "yes" ]] || [[ "$CONFIRM" == "YES" ]]; then
     echo "GPU $AVAILABLE_GPU is running..."
-    
+
     ssh gpu-server bash << EOF
-cd DiffusionLight
+cd StyleLight
 
 if [ -f ~/miniconda3/etc/profile.d/conda.sh ]; then
     source ~/miniconda3/etc/profile.d/conda.sh
@@ -37,28 +35,28 @@ elif [ -f /opt/miniconda3/etc/profile.d/conda.sh ]; then
 elif [ -f ~/anaconda3/etc/profile.d/conda.sh ]; then
     source ~/anaconda3/etc/profile.d/conda.sh
 else
+    echo "conda initialization script not found, searching for conda in PATH..."
     export PATH=\$PATH:/opt/miniconda3/bin:/home/\$USER/miniconda3/bin
 fi
 
-conda activate diffusionlight
+conda activate StyleLight
 
-CUDA_VISIBLE_DEVICES=$AVAILABLE_GPU python padding.py imgs/${EXPERIMENT_NUM}.png
-CUDA_VISIBLE_DEVICES=$AVAILABLE_GPU python inpaint.py --dataset imgs/${EXPERIMENT_NUM} --output_dir out/${EXPERIMENT_NUM} --no_torch_compile
-CUDA_VISIBLE_DEVICES=$AVAILABLE_GPU python ball2envmap.py --ball_dir out/${EXPERIMENT_NUM}/square --envmap_dir out/${EXPERIMENT_NUM}/envmap
-python exposure2hdr.py --input_dir out/${EXPERIMENT_NUM}/envmap --output_dir out/${EXPERIMENT_NUM}/hdr
+CUDA_VISIBLE_DEVICES=$AVAILABLE_GPU python test_lighting.py
 
-echo "DiffusionLight Success"
+PYTHONPATH=/node_data/urp25sp_kong/StyleLight:/node_data/urp25sp_kong/StyleLight/skylibs  python evaluation/tonemap.py --testdata assets/checkpoints_without_light_mask_both_finetuned --out_dir out
+
 EOF
 
     if [ $? -eq 0 ]; then
-        
+        echo "=== GPU server processing completed ==="
+
         mkdir -p input/${EXPERIMENT_NUM}
-        
-        echo "Copying HDR file to local..."
-        scp gpu-server:/node_data/urp25sp_kong/DiffusionLight/out/${EXPERIMENT_NUM}/hdr/padded_${EXPERIMENT_NUM}.exr /Users/jinwoo/Documents/work/svoi/input/${EXPERIMENT_NUM}/global.exr
-        
+
+        echo "Copying result HDR file to local..."
+        scp gpu-server:/node_data/urp25sp_kong/StyleLight/data/tone/out/${EXPERIMENT_NUM}_test.exr /Users/jinwoo/Documents/work/svoi/input/${EXPERIMENT_NUM}/sl.exr
+
         if [ $? -eq 0 ]; then
-            echo "HDR file copied to input/${EXPERIMENT_NUM}/global.hdr"
+            echo "HDR file copied: input/${EXPERIMENT_NUM}/sl.exr"
             echo "All tasks completed!"
         else
             echo "Error: Failed to copy HDR file."
