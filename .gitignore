@@ -8,6 +8,7 @@ out
 src/legacy/
 
 .DS_Store
+.mailmap
 metrics_table.csv
 .zed/settings.json
 src/__pycache__/
