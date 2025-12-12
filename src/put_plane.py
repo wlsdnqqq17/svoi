@@ -119,6 +119,8 @@ def create_primitive_object(primitive_type, location=(0, 0, 0)):
         obj.data.materials[0] = mat
 
     # Smooth shading 적용
+    if not bpy.context.view_layer:
+        raise RuntimeError
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.shade_smooth()
 
@@ -178,7 +180,8 @@ def setup_camera(center, camera_name, position_offset):
 
     direction = center - camera.location
     camera.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
-
+    if not bpy.context.scene:
+        raise RuntimeError
     bpy.context.scene.camera = camera
 
     bpy.context.scene.render.resolution_x = 1920
@@ -192,10 +195,6 @@ def convert_png_to_jpg(png_path, jpg_path, quality=95):
     try:
         # PNG 이미지 읽기
         img = cv2.imread(str(png_path))
-        if img is None:
-            print(f"Warning: Could not read PNG file: {png_path}")
-            return False
-
         # JPG로 저장 (품질 설정)
         success = cv2.imwrite(str(jpg_path), img, [cv2.IMWRITE_JPEG_QUALITY, quality])
         if success:
@@ -211,6 +210,8 @@ def convert_png_to_jpg(png_path, jpg_path, quality=95):
 
 def render_scene(camera, render_filename, dataset_dir):
     """기존 카메라로 씬 렌더링"""
+    if not bpy.context.scene:
+        raise RuntimeError
     bpy.context.scene.render.filepath = str(dataset_dir / render_filename)
     bpy.ops.render.render(write_still=True)
     print(f"Rendered: {render_filename} from {camera.name}")
@@ -289,6 +290,8 @@ def find_texture(tex_dir, texture_type):
 
 def setup_world_environment(dataset_dir):
     """월드 환경 설정"""
+    if not bpy.context.scene:
+        raise RuntimeError
     world = bpy.context.scene.world
     if world is None:
         raise RuntimeError("No world in scene")
@@ -330,14 +333,23 @@ def setup_world_environment(dataset_dir):
 
 def setup_render_settings(render_samples):
     """렌더 설정"""
+    if not bpy.context.scene:
+        raise RuntimeError
     bpy.context.scene.render.engine = "CYCLES"
+    if not bpy.context.scene.cycles:
+        raise RuntimeError
     bpy.context.scene.cycles.samples = render_samples
     bpy.context.scene.cycles.preview_samples = render_samples
     print(f"Render engine set to Cycles with {render_samples} samples")
 
 
-def select_camera_angle():
-    """카메라 각도 선택"""
+def select_camera_angle(insertion_pos: tuple[float, float] | None = None):
+    """카메라 각도 선택
+
+    Args:
+        insertion_pos: insertion object의 (x, y) 위치.
+                       주어지면 해당 방향의 각도를 선택.
+    """
     diagonal_angles = [
         (1.8, 0.8, 0.3),
         (-1.8, 0.8, 0.3),
@@ -353,7 +365,22 @@ def select_camera_angle():
         (-1.5, -1.5, 0.7),
     ]
 
-    selected_angle = random.choice(diagonal_angles)
+    if insertion_pos is None:
+        selected_angle = random.choice(diagonal_angles)
+    else:
+        # insertion object와 같은 방향(사분면)의 각도만 필터링
+        ix, iy = insertion_pos
+        matching_angles = [
+            angle
+            for angle in diagonal_angles
+            if (angle[0] > 0) == (ix > 0) and (angle[1] > 0) == (iy > 0)
+        ]
+        selected_angle = (
+            random.choice(matching_angles)
+            if matching_angles
+            else random.choice(diagonal_angles)
+        )
+
     return (selected_angle[0], selected_angle[1], selected_angle[2])
 
 
@@ -378,14 +405,12 @@ def adjust_plane_material_scale(plane, scale_factor):
 
 def create_object_list(glb_paths, args):
     """GLB 파일들과 primitive 객체들을 섞어서 배치할 리스트 생성"""
-    primitive_types = ["cube", "sphere", "cylinder", "cone", "torus", "monkey"]
+    primitive_types = ["cube", "sphere", "cylinder", "cone", "torus"]
     all_objects = []
 
-    # 모든 GLB 파일 추가
     for glb_path in glb_paths:
         all_objects.append(("glb", str(glb_path)))
 
-    # 파라미터로 받은 범위에서 랜덤 primitive 객체 추가
     num_primitives = random.randint(args.num_primitives[0], args.num_primitives[1])
     for _ in range(num_primitives):
         primitive_type = random.choice(primitive_types)
@@ -437,12 +462,13 @@ def place_object_on_plane(parent_object, plane, x_pos, y_pos):
     parent_object.location = (x_pos, y_pos, 0)
 
     # 스케일링 후 객체의 실제 바운딩 박스 계산
-    bpy.context.view_layer.update()  # 변형 업데이트
+    if not bpy.context.view_layer:
+        raise RuntimeError
+    bpy.context.view_layer.update()
 
     plane_height = plane.location.z + (plane.dimensions.z / 2)
 
     if parent_object.type == "EMPTY":
-        # Empty 객체의 경우 자식들의 월드 스페이스 바운딩 박스 계산
         mesh_children = get_all_mesh_children(parent_object)
         if mesh_children:
             min_z_world = float("inf")
@@ -470,187 +496,142 @@ def place_object_on_plane(parent_object, plane, x_pos, y_pos):
     parent_object.location = (x_pos, y_pos, parent_object.location.z + z_offset)
 
 
-def place_all_objects(
-    glb_paths,
-    args,
-    target_max_dim_glb,
-    target_max_dim_primitive,
+def place_single_object(
+    obj_type,
+    obj_data,
+    index,
+    placed_positions,
+    target_max_dim,
     plane_size,
     safe_margin,
     plane,
 ):
-    """모든 객체를 배치하는 함수"""
-    all_objects = create_object_list(glb_paths, args)
-    placed_positions = []
-    glb_object_to_file = {}
+    parent_object = None
+    glb_file_name = None
 
-    # 객체 배치 루프
-    for i, (obj_type, obj_data) in enumerate(all_objects):
-        parent_object = None
+    if obj_type == "glb":
+        # GLB 파일 임포트
+        existing_objects = set(bpy.data.objects)
+        bpy.ops.import_scene.gltf(filepath=obj_data)
+        new_objects = set(bpy.data.objects) - existing_objects
 
-        if obj_type == "glb":
-            # GLB 파일 임포트
-            existing_objects = set(bpy.data.objects)
-            bpy.ops.import_scene.gltf(filepath=obj_data)
-            new_objects = set(bpy.data.objects) - existing_objects
+        # 상위 객체 찾기
+        for obj in new_objects:
+            if obj.parent is None and (
+                obj.type == "EMPTY"
+                or any(child in new_objects for child in obj.children)
+            ):
+                parent_object = obj
+                break
 
-            # 상위 객체 찾기
-            for obj in new_objects:
-                if obj.parent is None and (
-                    obj.type == "EMPTY"
-                    or any(child in new_objects for child in obj.children)
-                ):
-                    parent_object = obj
-                    break
-
-            if parent_object is None:
-                mesh_objects = [obj for obj in new_objects if obj.type == "MESH"]
-                if mesh_objects:
-                    parent_object = mesh_objects[0]
-
-            # GLB 객체와 파일 경로 매핑 저장
-            if parent_object:
-                glb_object_to_file[parent_object.name] = Path(obj_data).name
-
-        elif obj_type == "primitive":
-            # Primitive 객체 생성
-            parent_object = create_primitive_object(obj_data, location=(0, 0, 0))
-            parent_object.name = f"{obj_data}_{i}"
+        if parent_object is None:
+            mesh_objects = [obj for obj in new_objects if obj.type == "MESH"]
+            if mesh_objects:
+                parent_object = mesh_objects[0]
 
         if parent_object:
-            # 객체 크기 계산 및 스케일링
-            current_dim = calculate_object_dimensions(parent_object)
-            target_dim = (
-                target_max_dim_glb if obj_type == "glb" else target_max_dim_primitive
-            )
-            scale_factor = target_dim / current_dim if current_dim > 0 else 1.0
+            glb_file_name = Path(obj_data).name
 
-            # 기존 스케일에 스케일 팩터를 곱해서 적용
-            original_scale = parent_object.scale
-            parent_object.scale = (
-                original_scale[0] * scale_factor,
-                original_scale[1] * scale_factor,
-                original_scale[2] * scale_factor,
-            )
+    elif obj_type == "primitive":
+        parent_object = create_primitive_object(obj_data, location=(0, 0, 0))
+        parent_object.name = f"{obj_data}_{index}"
 
-            # insert_object.py 방식으로 회전 적용
-            random_rotation = random.uniform(0, 2 * math.pi)
-            if obj_type == "glb":
-                # GLB의 경우 선택된 첫 번째 객체에만 회전 적용
-                selected_objects = bpy.context.selected_objects
-                if selected_objects:
-                    imported_obj = selected_objects[0]
-                    imported_obj.rotation_mode = "XYZ"
+    if parent_object is None:
+        print(f"Object {index + 1}: No parent object found for {obj_type}: {obj_data}")
+        return None, None, None
 
-                    # 기존 회전값 확인 및 출력
-                    original_rotation = imported_obj.rotation_euler
-                    print(
-                        f"GLB '{imported_obj.name}' 원본 회전값: X={math.degrees(original_rotation.x):.1f}°, Y={math.degrees(original_rotation.y):.1f}°, Z={math.degrees(original_rotation.z):.1f}°"
-                    )
+    # 객체 크기 계산 및 스케일링
+    current_dim = calculate_object_dimensions(parent_object)
+    scale_factor = target_max_dim / current_dim if current_dim > 0 else 1.0
 
-                    # 기존 회전값에 랜덤 Z축 회전 추가
-                    new_rotation = Euler(
-                        (
-                            original_rotation.x,
-                            original_rotation.y,
-                            original_rotation.z + random_rotation,
-                        ),
-                        "XYZ",
-                    )
-                    imported_obj.rotation_euler = new_rotation
+    original_scale = parent_object.scale
+    parent_object.scale = (
+        original_scale[0] * scale_factor,
+        original_scale[1] * scale_factor,
+        original_scale[2] * scale_factor,
+    )
 
-                    print(
-                        f"GLB '{imported_obj.name}' 새로운 회전값: X={math.degrees(new_rotation.x):.1f}°, Y={math.degrees(new_rotation.y):.1f}°, Z={math.degrees(new_rotation.z):.1f}°"
-                    )
-                else:
-                    # fallback: 부모 객체에 회전 적용
-                    original_rotation = parent_object.rotation_euler
-                    print(
-                        f"Parent '{parent_object.name}' 원본 회전값: X={math.degrees(original_rotation.x):.1f}°, Y={math.degrees(original_rotation.y):.1f}°, Z={math.degrees(original_rotation.z):.1f}°"
-                    )
-                    new_rotation = Euler(
-                        (
-                            original_rotation.x,
-                            original_rotation.y,
-                            original_rotation.z + random_rotation,
-                        ),
-                        "XYZ",
-                    )
-                    parent_object.rotation_euler = new_rotation
-            else:
-                # Primitive 객체의 경우 기존 방식 유지
-                parent_object.rotation_euler = Euler((0, 0, random_rotation), "XYZ")
+    # 회전 적용
+    random_rotation = random.uniform(0, 2 * math.pi)
+    if obj_type == "glb":
+        selected_objects = bpy.context.selected_objects
+        target_obj = selected_objects[0] if selected_objects else parent_object
+        target_obj.rotation_mode = "XYZ"
+        original_rotation = target_obj.rotation_euler
+        target_obj.rotation_euler = Euler(
+            (
+                original_rotation.x,
+                original_rotation.y,
+                original_rotation.z + random_rotation,
+            ),
+            "XYZ",
+        )
+    else:
+        parent_object.rotation_euler = Euler((0, 0, random_rotation), "XYZ")
 
-            # 스케일링 후 실제 메시 크기 계산을 위해 임시 배치
-            parent_object.location = (0, 0, 0)
-            bpy.context.view_layer.update()  # 스케일링 반영
+    # 스케일링 반영
+    parent_object.location = (0, 0, 0)
+    if not bpy.context.view_layer:
+        raise RuntimeError
+    bpy.context.view_layer.update()
 
-            # 실제 스케일링된 객체의 크기 계산
-            actual_dimensions = calculate_object_dimensions(parent_object)
+    # 실제 스케일링된 객체의 크기 계산
+    actual_dimensions = calculate_object_dimensions(parent_object)
 
-            # 겹치지 않는 위치 찾기
+    # 겹치지 않는 위치 찾기
+    x_pos, y_pos = find_non_overlapping_position(
+        actual_dimensions, placed_positions, plane_size, safe_margin
+    )
 
-            max_attempts = 30
-            attempt = 0
-            x_pos = None
-            y_pos = None
+    # 객체를 평면 위에 배치
+    place_object_on_plane(parent_object, plane, x_pos, y_pos)
 
-            for attempt in range(max_attempts):
-                x_pos = random.uniform(
-                    -plane_size / 2 + safe_margin, plane_size / 2 - safe_margin
-                )
-                y_pos = random.uniform(
-                    -plane_size / 2 + safe_margin, plane_size / 2 - safe_margin
-                )
+    print(
+        f"Placed {obj_type} '{parent_object.name}' at ({x_pos:.2f}, {y_pos:.2f}, {parent_object.location.z:.2f})"
+    )
 
-                # 각 기존 객체와의 거리 계산
-                too_close = False
-                for pos_info in placed_positions:
-                    if len(pos_info) == 3:  # (x, y, size)
-                        prev_x, prev_y, prev_obj_size = pos_info
-                        distance = math.sqrt(
-                            (x_pos - prev_x) ** 2 + (y_pos - prev_y) ** 2
-                        )
-                        required_distance = (actual_dimensions + prev_obj_size) * 0.75
-                        if distance < required_distance:
-                            too_close = True
-                            break
-                    else:  # 이전 형식 호환성 (x, y)
-                        prev_x, prev_y = pos_info
-                        distance = math.sqrt(
-                            (x_pos - prev_x) ** 2 + (y_pos - prev_y) ** 2
-                        )
-                        required_distance = actual_dimensions * 1.5
-                        if distance < required_distance:
-                            too_close = True
-                            break
+    return parent_object, glb_file_name, (x_pos, y_pos, actual_dimensions)
 
-                obj_radius = actual_dimensions * 0.6
-                boundary_check = (
-                    abs(x_pos) + obj_radius <= plane_size / 2 - safe_margin
-                    and abs(y_pos) + obj_radius <= plane_size / 2 - safe_margin
-                )
 
-                if not too_close and boundary_check:
-                    break
+def find_non_overlapping_position(
+    obj_size,
+    placed_positions,
+    plane_size,
+    safe_margin,
+    max_attempts=30,
+):
+    while max_attempts:
+        x_pos = random.uniform(
+            -plane_size / 2 + safe_margin, plane_size / 2 - safe_margin
+        )
+        y_pos = random.uniform(
+            -plane_size / 2 + safe_margin, plane_size / 2 - safe_margin
+        )
 
-            # 적절한 위치를 못 찾으면 더 안전한 위치 사용
-            if attempt == max_attempts - 1:
-                x_pos = random.uniform(-plane_size / 3, plane_size / 3)
-                y_pos = random.uniform(-plane_size / 3, plane_size / 3)
+        # 각 기존 객체와의 거리 계산
+        too_close = False
+        for prev_x, prev_y, prev_obj_size in placed_positions:
+            distance_sq = (x_pos - prev_x) ** 2 + (y_pos - prev_y) ** 2
+            required_distance = (obj_size + prev_obj_size) * 0.75
+            if distance_sq < required_distance**2:
+                too_close = True
+                break
 
-            placed_positions.append((x_pos, y_pos, actual_dimensions))
+        obj_radius = obj_size * 0.6
+        boundary_check = (
+            abs(x_pos) + obj_radius <= plane_size / 2 - safe_margin
+            and abs(y_pos) + obj_radius <= plane_size / 2 - safe_margin
+        )
 
-            # 객체를 평면 위에 배치
-            place_object_on_plane(parent_object, plane, x_pos, y_pos)
+        if not too_close and boundary_check:
+            return x_pos, y_pos
+        max_attempts -= 1
 
-            print(
-                f"Placed {obj_type} '{parent_object.name}' at ({x_pos:.2f}, {y_pos:.2f}, {parent_object.location.z:.2f})"
-            )
-        else:
-            print(f"Object {i + 1}: No parent object found for {obj_type}: {obj_data}")
-
-    return placed_positions, glb_object_to_file
+    # 적절한 위치를 못 찾으면 더 안전한 위치 사용
+    return (
+        random.uniform(-plane_size / 3, plane_size / 3),
+        random.uniform(-plane_size / 3, plane_size / 3),
+    )
 
 
 def prepare_glb_insertion_object(glb_object_to_file):
@@ -731,6 +712,8 @@ def render_glb_scenes(args, dataset_dir, camera, insertion_object):
             for obj in insertion_objects:
                 obj.hide_render = True
 
+        if not bpy.context.scene:
+            raise RuntimeError
         bpy.context.scene.render.film_transparent = False
         render_scene(camera, f"{args.dataset_id}_before.png", dataset_dir)
         convert_png_to_jpg(
@@ -854,6 +837,8 @@ def render_glb_object_only(camera, insertion_object, dataset_dir, args):
                     print(f"Hidden from camera (keeping reflections): {obj.name}")
 
         # 투명 배경으로 설정
+        if not bpy.context.scene:
+            raise RuntimeError
         bpy.context.scene.render.film_transparent = True
         print("Set film_transparent = True for object-only render")
 
@@ -950,6 +935,68 @@ def save_metadata(args, dataset_dir, camera, insertion_object):
     print(f"Metadata saved to {metadata_path}")
 
 
+def setup_plane_material_nodes(
+    mat: bpy.types.Material,
+    plane: bpy.types.Object,
+    color_path: str,
+    roughness_path: str,
+    normal_path: str,
+) -> None:
+    """평면 머티리얼 노드를 설정합니다."""
+    mat.use_nodes = True
+    if mat.node_tree is None:
+        raise RuntimeError("Failed to create node tree")
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+
+    if plane.data is None:
+        raise RuntimeError("Failed to load plane")
+    for node in nodes:
+        nodes.remove(node)
+
+    # 노드 생성
+    tex_coord = nodes.new(type="ShaderNodeTexCoord")
+    mapping = nodes.new(type="ShaderNodeMapping")
+    tex_image_color = nodes.new(type="ShaderNodeTexImage")
+    tex_image_rough = nodes.new(type="ShaderNodeTexImage")
+    tex_image_normal = nodes.new(type="ShaderNodeTexImage")
+    normal_map = nodes.new(type="ShaderNodeNormalMap")
+    bsdf = nodes.new(type="ShaderNodeBsdfPrincipled")
+    output = nodes.new(type="ShaderNodeOutputMaterial")
+
+    # 이미지 로드
+    tex_image_color.image = bpy.data.images.load(color_path)
+    tex_image_rough.image = bpy.data.images.load(roughness_path)
+    if not tex_image_rough.image.colorspace_settings:
+        raise RuntimeError
+    tex_image_rough.image.colorspace_settings.name = "Non-Color"
+    tex_image_normal.image = bpy.data.images.load(normal_path)
+    if not tex_image_normal.image.colorspace_settings:
+        raise RuntimeError
+    tex_image_normal.image.colorspace_settings.name = "Non-Color"
+
+    # 노드 위치 설정
+    tex_coord.location = (-800, 0)
+    mapping.location = (-600, 0)
+    tex_image_color.location = (-400, 200)
+    tex_image_rough.location = (-400, 0)
+    tex_image_normal.location = (-400, -200)
+    normal_map.location = (-200, -200)
+    bsdf.location = (0, 0)
+    output.location = (200, 0)
+
+    # 노드 연결
+    links.new(tex_coord.outputs["UV"], mapping.inputs["Vector"])
+    links.new(mapping.outputs["Vector"], tex_image_color.inputs["Vector"])
+    links.new(mapping.outputs["Vector"], tex_image_rough.inputs["Vector"])
+    links.new(mapping.outputs["Vector"], tex_image_normal.inputs["Vector"])
+    links.new(tex_image_color.outputs["Color"], bsdf.inputs["Base Color"])
+    links.new(tex_image_rough.outputs["Color"], bsdf.inputs["Roughness"])
+    links.new(tex_image_normal.outputs["Color"], normal_map.inputs["Color"])
+    links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
+    links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
+
+
 def main():
     args = parse_args()
 
@@ -976,56 +1023,11 @@ def main():
 
     # 평면 머티리얼 설정
     mat = bpy.data.materials.new(name="Plane_Material")
-    mat.use_nodes = True
-    if mat.node_tree is None:
-        raise RuntimeError("Failed to create node tree")
-    nodes = mat.node_tree.nodes
-    links = mat.node_tree.links
-
-    if plane.data is None:
-        raise RuntimeError("Failed to load plane")
-    for node in nodes:
-        nodes.remove(node)
-
-    # 노드 생성
-    tex_coord = nodes.new(type="ShaderNodeTexCoord")
-    mapping = nodes.new(type="ShaderNodeMapping")
-    tex_image_color = nodes.new(type="ShaderNodeTexImage")
-    tex_image_rough = nodes.new(type="ShaderNodeTexImage")
-    tex_image_normal = nodes.new(type="ShaderNodeTexImage")
-    normal_map = nodes.new(type="ShaderNodeNormalMap")
-    bsdf = nodes.new(type="ShaderNodeBsdfPrincipled")
-    output = nodes.new(type="ShaderNodeOutputMaterial")
-
-    # 이미지 로드
-    tex_image_color.image = bpy.data.images.load(color_path)
-    tex_image_rough.image = bpy.data.images.load(roughness_path)
-    tex_image_rough.image.colorspace_settings.name = "Non-Color"
-    tex_image_normal.image = bpy.data.images.load(normal_path)
-    tex_image_normal.image.colorspace_settings.name = "Non-Color"
-
-    # 노드 위치 설정
-    tex_coord.location = (-800, 0)
-    mapping.location = (-600, 0)
-    tex_image_color.location = (-400, 200)
-    tex_image_rough.location = (-400, 0)
-    tex_image_normal.location = (-400, -200)
-    normal_map.location = (-200, -200)
-    bsdf.location = (0, 0)
-    output.location = (200, 0)
-
-    # 노드 연결
-    links.new(tex_coord.outputs["UV"], mapping.inputs["Vector"])
-    links.new(mapping.outputs["Vector"], tex_image_color.inputs["Vector"])
-    links.new(mapping.outputs["Vector"], tex_image_rough.inputs["Vector"])
-    links.new(mapping.outputs["Vector"], tex_image_normal.inputs["Vector"])
-    links.new(tex_image_color.outputs["Color"], bsdf.inputs["Base Color"])
-    links.new(tex_image_rough.outputs["Color"], bsdf.inputs["Roughness"])
-    links.new(tex_image_normal.outputs["Color"], normal_map.inputs["Color"])
-    links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
-    links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
+    setup_plane_material_nodes(mat, plane, color_path, roughness_path, normal_path)
 
     # 머티리얼 적용
+    if not plane.data:
+        raise RuntimeError
     if len(plane.data.materials) == 0:
         plane.data.materials.append(mat)
     else:
@@ -1037,17 +1039,34 @@ def main():
             image.pack()
 
     # 객체 배치
-    _, glb_object_to_file = place_all_objects(
-        glb_paths,
-        args,
-        args.glb_max_size,
-        args.primitive_max_size,
-        args.plane_size,
-        args.safe_margin,
-        plane,
-    )
+    all_objects = create_object_list(glb_paths, args)
+    placed_positions = []
+    glb_object_to_file = {}
 
-    selected_angle = select_camera_angle()
+    insertion_pos = None
+    for i, (obj_type, obj_data) in enumerate(all_objects):
+        target_dim = args.glb_max_size if obj_type == "glb" else args.primitive_max_size
+        parent_obj, glb_file, pos_info = place_single_object(
+            obj_type,
+            obj_data,
+            i,
+            placed_positions,
+            target_dim,
+            args.plane_size,
+            args.safe_margin,
+            plane,
+        )
+        if pos_info:
+            placed_positions.append(pos_info)
+        else:
+            raise RuntimeError
+        if parent_obj and glb_file:
+            glb_object_to_file[parent_obj.name] = glb_file
+            # 3.glb 위치 저장 (insertion object용)
+            if glb_file == "3.glb":
+                insertion_pos = (pos_info[0], pos_info[1])
+
+    selected_angle = select_camera_angle(insertion_pos)
     camera = setup_camera(Vector((0, 0, 0)), "Camera_Diagonal", selected_angle)
 
     # 환경 및 렌더 설정
