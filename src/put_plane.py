@@ -48,8 +48,13 @@ def parse_args():
     return parser.parse_args(blender_args)
 
 
-def create_material_nodes(material_name):
-    """공통 머티리얼 노드 생성 함수"""
+def create_material_nodes(material_name, high_metallic=False):
+    """공통 머티리얼 노드 생성 함수
+
+    Args:
+        material_name: 머티리얼 이름
+        high_metallic: True면 높은 메탈릭(0.9-1.0), 낮은 러프니스(0.1-0.3) 적용
+    """
     mat = bpy.data.materials.new(name=material_name)
     mat.use_nodes = True
     if mat.node_tree is None:
@@ -75,9 +80,13 @@ def create_material_nodes(material_name):
     value = random.uniform(0.6, 1.0)
     base_color = (*colorsys.hsv_to_rgb(hue, saturation, value), 1.0)
 
-    # 메탈릭/러프니스 설정 (기본값 또는 랜덤)
-    metallic = random.uniform(0, 1)
-    roughness = random.uniform(0.1, 0.9)
+    # 메탈릭/러프니스 설정
+    if high_metallic:
+        metallic = random.uniform(0.9, 1.0)
+        roughness = random.uniform(0.1, 0.3)
+    else:
+        metallic = random.uniform(0, 1)
+        roughness = random.uniform(0.1, 0.9)
 
     # 노드 값 설정
     bsdf.inputs["Base Color"].default_value = base_color
@@ -90,8 +99,14 @@ def create_material_nodes(material_name):
     return mat
 
 
-def create_primitive_object(primitive_type, location=(0, 0, 0)):
-    """Blender 내장 primitive 객체 생성 함수"""
+def create_primitive_object(primitive_type, location=(0, 0, 0), high_metallic=False):
+    """Blender 내장 primitive 객체 생성 함수
+
+    Args:
+        primitive_type: primitive 타입 (cube, sphere, cylinder, cone, torus, monkey)
+        location: 생성 위치
+        high_metallic: True면 높은 메탈릭 머티리얼 적용
+    """
     primitive_ops = {
         "cube": bpy.ops.mesh.primitive_cube_add,
         "sphere": bpy.ops.mesh.primitive_uv_sphere_add,
@@ -109,8 +124,10 @@ def create_primitive_object(primitive_type, location=(0, 0, 0)):
     if obj is None or obj.data is None:
         raise RuntimeError(f"Failed to create primitive object: {primitive_type}")
 
-    # 랜덤 머티리얼 생성 및 적용
-    mat = create_material_nodes(f"{primitive_type}_material")
+    # 머티리얼 생성 및 적용
+    mat = create_material_nodes(
+        f"{primitive_type}_material", high_metallic=high_metallic
+    )
 
     # 머티리얼 적용
     if len(obj.data.materials) == 0:
@@ -125,6 +142,35 @@ def create_primitive_object(primitive_type, location=(0, 0, 0)):
     bpy.ops.object.shade_smooth()
 
     return obj
+
+
+def export_object_as_glb(obj, export_path):
+    """객체를 GLB 파일로 내보내기
+
+    Args:
+        obj: 내보낼 Blender 객체
+        export_path: GLB 파일 저장 경로
+    """
+    view_layer = bpy.context.view_layer
+    assert isinstance(view_layer, bpy.types.ViewLayer)
+    # Deselect all objects
+    bpy.ops.object.select_all(action="DESELECT")
+
+    # Select only the target object
+    obj.select_set(True)
+    view_layer.objects.active = obj
+
+    # Export as GLB
+    bpy.ops.export_scene.gltf(
+        filepath=str(export_path),
+        export_format="GLB",
+        use_selection=True,
+        export_apply=True,
+    )
+    print(f"Exported insertion object to: {export_path}")
+
+    # Deselect
+    obj.select_set(False)
 
 
 def get_all_mesh_children(obj):
@@ -511,6 +557,7 @@ def place_single_object(
     plane_size,
     safe_margin,
     plane,
+    high_metallic=False,
 ):
     parent_object = None
     glb_file_name = None
@@ -539,7 +586,9 @@ def place_single_object(
             glb_file_name = Path(obj_data).name
 
     elif obj_type == "primitive":
-        parent_object = create_primitive_object(obj_data, location=(0, 0, 0))
+        parent_object = create_primitive_object(
+            obj_data, location=(0, 0, 0), high_metallic=high_metallic
+        )
         parent_object.name = f"{obj_data}_{index}"
 
     if parent_object is None:
@@ -652,19 +701,18 @@ def find_non_overlapping_position(
     return (0, 0)
 
 
-def prepare_glb_insertion_object(glb_object_to_file):
-    """GLB insertion object 정보를 미리 준비 (렌더링 전 가시성 체크용)"""
-    if not glb_object_to_file:
-        print("Warning: No GLB objects available for insertion")
+def prepare_insertion_object(insertion_object_info):
+    """Insertion object 정보를 미리 준비 (렌더링 전 가시성 체크용)
+
+    Args:
+        insertion_object_info: dict with 'name' and 'file' keys
+    """
+    if not insertion_object_info:
+        print("Warning: No insertion object info provided")
         return None
 
-    # 3.glb 우선 선택 (object_name -> filename 매핑)
-    candidates = [
-        (name, file) for name, file in glb_object_to_file.items() if file == "3.glb"
-    ]
-    if not candidates:
-        raise ValueError("Required insertion object mapping for '3.glb' not found")
-    target_name, target_file = candidates[0]
+    target_name = insertion_object_info["name"]
+    target_file = insertion_object_info["file"]
     parent_object = bpy.data.objects.get(target_name)
 
     if not parent_object:
@@ -672,7 +720,7 @@ def prepare_glb_insertion_object(glb_object_to_file):
         return None
 
     print(
-        f"Selected GLB object for insertion: {target_name}, file: {target_file}, position: ({parent_object.location.x:.2f}, {parent_object.location.y:.2f})"
+        f"Selected insertion object: {target_name}, file: {target_file}, position: ({parent_object.location.x:.2f}, {parent_object.location.y:.2f})"
     )
 
     # 객체 정보를 dict로 반환
@@ -810,6 +858,12 @@ def main():
     tex_dir = dataset_dir / "textures"
     glb_paths = [dataset_dir / f"{i}.glb" for i in range(1, 4)]
 
+    # Randomly select insertion object type (equal probability)
+    # Options: 3.glb + 5 primitives = 6 options
+    insertion_options = ["3.glb", "cube", "sphere", "cylinder", "cone", "torus"]
+    selected_insertion_type = random.choice(insertion_options)
+    print(f"Selected insertion object type: {selected_insertion_type}")
+
     # Clear existing objects
     for obj in bpy.data.objects:
         bpy.data.objects.remove(obj)
@@ -844,12 +898,42 @@ def main():
             image.pack()
 
     # 객체 배치
-    all_objects = create_object_list(glb_paths, args)
+    is_primitive_insertion = selected_insertion_type != "3.glb"
+    if is_primitive_insertion:
+        # Exclude 3.glb when primitive is chosen as insertion object
+        glb_paths_to_use = [p for p in glb_paths if not str(p).endswith("3.glb")]
+    else:
+        glb_paths_to_use = glb_paths
+
+    all_objects = create_object_list(glb_paths_to_use, args)
+
+    if is_primitive_insertion:
+        # Add insertion primitive with special marker
+        all_objects.append(("insertion_primitive", selected_insertion_type))
+
     placed_positions = []
     glb_object_to_file = {}
+    insertion_object_info = None  # Track insertion object info
 
     insertion_pos = None
     for i, (obj_type, obj_data) in enumerate(all_objects):
+        # Check if this is the insertion object
+        is_insertion = False
+        high_metallic = False
+
+        if obj_type == "insertion_primitive":
+            # This is the insertion primitive
+            is_insertion = True
+            high_metallic = True
+            obj_type = "primitive"  # Treat as primitive for placement
+        elif (
+            obj_type == "glb"
+            and obj_data.endswith("3.glb")
+            and not is_primitive_insertion
+        ):
+            # This is 3.glb and we selected 3.glb as insertion
+            is_insertion = True
+
         target_dim = args.glb_max_size if obj_type == "glb" else args.primitive_max_size
         parent_obj, glb_file, pos_info = place_single_object(
             obj_type,
@@ -860,16 +944,34 @@ def main():
             args.plane_size,
             args.safe_margin,
             plane,
+            high_metallic=high_metallic,
         )
         if pos_info:
             placed_positions.append(pos_info)
         else:
             raise RuntimeError
+
         if parent_obj and glb_file:
             glb_object_to_file[parent_obj.name] = glb_file
-            # 3.glb 위치 저장 (insertion object용)
-            if glb_file == "3.glb":
-                insertion_pos = (pos_info[0], pos_info[1])
+
+        # Track insertion object info
+        if is_insertion and parent_obj:
+            insertion_pos = (pos_info[0], pos_info[1])
+            if high_metallic:
+                # Primitive insertion object - export as GLB
+                glb_filename = f"{selected_insertion_type}_metallic.glb"
+                export_path = dataset_dir / glb_filename
+                export_object_as_glb(parent_obj, export_path)
+                insertion_object_info = {
+                    "name": parent_obj.name,
+                    "file": glb_filename,
+                }
+            else:
+                # GLB insertion object (3.glb)
+                insertion_object_info = {
+                    "name": parent_obj.name,
+                    "file": glb_file,
+                }
 
     selected_angle = select_camera_angle(insertion_pos)
     camera = setup_camera(Vector((0, 0, 0)), "Camera_Diagonal", selected_angle)
@@ -879,7 +981,7 @@ def main():
     setup_render_settings(args.render_samples)
 
     # Insertion object 준비
-    insertion_object = prepare_glb_insertion_object(glb_object_to_file)
+    insertion_object = prepare_insertion_object(insertion_object_info)
 
     # 렌더링
     render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
