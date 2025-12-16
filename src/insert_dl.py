@@ -84,14 +84,20 @@ cam_obj.rotation_mode = "QUATERNION"
 direction = (target - cam_location).normalized()
 cam_obj.rotation_quaternion = direction.to_track_quat("-Z", "Y")
 
-bpy.context.scene.camera = cam_obj
-bpy.context.scene.render.engine = "CYCLES"
-bpy.context.scene.cycles.samples = 128
-bpy.context.scene.cycles.use_denoising = True
-bpy.context.scene.cycles.device = "GPU"
+scene = bpy.context.scene
+assert isinstance(scene, bpy.types.Scene)
 
-cam = bpy.context.scene.camera.data
-cam.type = "PERSP"
+scene.camera = cam_obj
+scene.render.engine = "CYCLES"
+
+if scene.cycles is None:
+    raise RuntimeError("Cycles is not available")
+scene.cycles.samples = 128
+scene.cycles.use_denoising = True
+scene.cycles.device = "GPU"
+
+cam = scene.camera.data
+assert isinstance(cam, bpy.types.Camera)
 cam.lens = 19
 cam.sensor_width = 36
 cam.sensor_height = 24
@@ -99,10 +105,10 @@ cam.clip_start = 0.01
 print(f"카메라 추가됨: 위치={cam_location}, 방향={look_dir}")
 
 # Import environment map
-world = bpy.context.scene.world
+world = scene.world
 nodes = world.node_tree.nodes
-for node in nodes:
-    nodes.remove(node)
+nodes.clear()
+
 tex_coord = nodes.new(type="ShaderNodeTexCoord")
 mapping = nodes.new(type="ShaderNodeMapping")
 env_tex = nodes.new(type="ShaderNodeTexEnvironment")
@@ -148,47 +154,49 @@ imported_obj.scale = Vector(metadata["insertion_object"]["scale"])
 
 # Render
 scene = bpy.context.scene
+assert isinstance(scene, bpy.types.Scene), "Scene is not available"
+
 scene.render.resolution_x = img_width
 scene.render.resolution_y = img_height
 scene.render.resolution_percentage = 100
 
-# # Render result
-# output1_path = os.path.join(output_path, "result_object.png")
-# scene.view_settings.view_transform = 'Standard'
-# scene.render.image_settings.color_mode = 'RGBA'
-# scene.render.image_settings.file_format = 'PNG'
-# scene.render.filepath = output1_path
-# bpy.ops.render.render(write_still=True)
-# print(f"Result 1 saved to {output_path}")
+tree = bpy.data.node_groups.new(name="Compositing Nodetree", type="CompositorNodeTree")
 
-scene.use_nodes = True
-tree = scene.node_tree
+scene.compositing_node_group = tree
 nodes = tree.nodes
 links = tree.links
-for node in nodes:
-    nodes.remove(node)
+
+# Nodes
 render_layers = nodes.new(type="CompositorNodeRLayers")
+render_layers.layer = scene.view_layers[0].name
+
 image_node = nodes.new(type="CompositorNodeImage")
 alpha_over = nodes.new(type="CompositorNodeAlphaOver")
-composite = nodes.new(type="CompositorNodeComposite")
-scale_node = nodes.new(type="CompositorNodeScale")
+group_output = nodes.new(type="NodeGroupOutput")
 
-image_node.image = bpy.data.images.load(img_path)
-scale_node.space = "RELATIVE"
-scale_node.inputs[1].default_value = 1
-scale_node.inputs[2].default_value = 1
+image_node.image = image
 
-render_layers.location = (-400, 100)
+iface = tree.interface
+iface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+tree.interface_update(bpy.context)
+
+# Layout
 image_node.location = (-600, -100)
-scale_node.location = (-400, -100)
+render_layers.location = (-400, -100)
 alpha_over.location = (0, 0)
-composite.location = (200, 0)
+group_output.location = (200, 0)
 
-links.new(image_node.outputs["Image"], scale_node.inputs[0])
-links.new(scale_node.outputs["Image"], alpha_over.inputs[1])
-links.new(render_layers.outputs["Image"], alpha_over.inputs[2])
-links.new(alpha_over.outputs["Image"], composite.inputs["Image"])
+links.new(image_node.outputs["Image"], alpha_over.inputs["Background"])
+links.new(render_layers.outputs["Image"], alpha_over.inputs["Foreground"])
+links.new(alpha_over.outputs["Image"], group_output.inputs["Image"])
 
+# Render result
+scene.view_settings.view_transform = "Standard"
+scene.render.image_settings.color_mode = "RGBA"
+scene.render.image_settings.file_format = "PNG"
+scene.render.filepath = os.path.join(output_path, "result1.png")
+
+bpy.ops.render.render(write_still=True)
 
 # Save Blender file
 blend_path = os.path.join(output_path, "insert_object.blend")
@@ -197,14 +205,3 @@ if os.path.exists(blend_path):
 bpy.ops.wm.save_as_mainfile(filepath=blend_path)
 
 print(f"Scene saved to {blend_path}")
-
-
-# Render result
-env_tex.image = env_image
-output1_path = os.path.join(output_path, "result.png")
-scene.view_settings.view_transform = "Standard"
-scene.render.image_settings.color_mode = "RGBA"
-scene.render.image_settings.file_format = "PNG"
-scene.render.filepath = output1_path
-bpy.ops.render.render(write_still=True)
-print(f"Result saved to {output_path}")
