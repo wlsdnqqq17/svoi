@@ -208,74 +208,80 @@ def convert_png_to_jpg(png_path, jpg_path, quality=95):
         return False
 
 
-def render_scene(camera, render_filename, dataset_dir):
-    """기존 카메라로 씬 렌더링"""
+def get_insertion_objects(insertion_object):
+    """Insertion object와 모든 자식 객체들을 리스트로 반환"""
+    if not insertion_object or "name" not in insertion_object:
+        return []
+
+    insertion_obj = bpy.data.objects.get(insertion_object["name"])
+    if not insertion_obj:
+        return []
+
+    objects = []
+
+    def collect_children(obj):
+        objects.append(obj)
+        for child in obj.children:
+            collect_children(child)
+
+    if insertion_obj.type == "EMPTY":
+        collect_children(insertion_obj)
+    else:
+        objects.append(insertion_obj)
+
+    return objects
+
+
+def render_scene(
+    camera,
+    render_filename,
+    dataset_dir,
+    insertion_object=None,
+    object_only=False,
+    hide_insertion=False,
+):
     if not bpy.context.scene:
-        raise RuntimeError
+        raise RuntimeError("No scene in context")
+
+    insertion_objects = (
+        get_insertion_objects(insertion_object) if insertion_object else []
+    )
+    hidden_from_camera = []
+
+    # 렌더링 전 상태 설정
+    if object_only:
+        if not insertion_objects:
+            print("Warning: No insertion object for object_only render")
+            return
+        for obj in bpy.data.objects:
+            if obj not in insertion_objects and obj != camera:
+                if obj.type in ["MESH", "EMPTY", "CURVE", "SURFACE", "META", "FONT"]:
+                    obj.visible_camera = False
+                    hidden_from_camera.append(obj)
+        bpy.context.scene.render.film_transparent = True
+
+    elif hide_insertion:
+        if not insertion_objects:
+            print("Warning: No insertion object for hide_insertion render")
+            return
+        for obj in insertion_objects:
+            obj.hide_render = True
+        bpy.context.scene.render.film_transparent = False
+
+    else:
+        bpy.context.scene.render.film_transparent = False
+
     bpy.context.scene.render.filepath = str(dataset_dir / render_filename)
     bpy.ops.render.render(write_still=True)
-    print(f"Rendered: {render_filename} from {camera.name}")
+    print(f"Rendered: {render_filename}")
 
+    if object_only:
+        for obj in hidden_from_camera:
+            obj.visible_camera = True
 
-def hide_glb_object_for_insertion(glb_object_to_file):
-    glb_objects = []
-    for obj in bpy.data.objects:
-        if obj.name.startswith("Sketchfab_model") and obj.type in ["EMPTY", "MESH"]:
-            glb_objects.append(obj)
-
-    if not glb_objects:
-        print("Warning: No GLB objects found in scene")
-        return None
-
-    preferred_objects = [
-        obj for obj in glb_objects if glb_object_to_file.get(obj.name) == "3.glb"
-    ]
-    if not preferred_objects:
-        raise ValueError("Required insertion object '3.glb' not found in scene")
-    target_object = preferred_objects[0]
-    target_name = target_object.name
-    target_file = glb_object_to_file.get(target_name, "unknown.glb")
-
-    target_matrix_world = target_object.matrix_world.copy()
-    target_location = list(target_object.location)
-    target_rotation = list(target_object.rotation_euler)
-    target_scale = list(target_object.scale)
-
-    print(
-        f"Selected GLB object for hiding: {target_name}, file: {target_file}, position: ({target_object.location.x:.2f}, {target_object.location.y:.2f})"
-    )
-
-    objects_to_hide = []
-
-    if target_object.type == "EMPTY":
-        # Empty 객체의 경우 모든 자식 객체들도 수집
-        def collect_children(obj):
-            objects_to_hide.append(obj)
-            for child in obj.children:
-                collect_children(child)
-
-        collect_children(target_object)
-    else:
-        # 메시 객체의 경우
-        objects_to_hide.append(target_object)
-
-    # 객체들을 렌더링에서 숨기기
-    for obj in objects_to_hide:
-        print(f"Hiding object from render: {obj.name}")
-        obj.hide_render = True
-
-    print(
-        f"GLB object hidden successfully. Total {len(objects_to_hide)} objects hidden."
-    )
-    return {
-        "name": target_name,
-        "file": target_file,
-        "matrix_world": [list(row) for row in target_matrix_world],
-        "location": target_location,
-        "rotation": target_rotation,
-        "scale": target_scale,
-        "hidden_objects": objects_to_hide,  # 숨긴 객체들의 참조 저장
-    }
+    elif hide_insertion:
+        for obj in insertion_objects:
+            obj.hide_render = False
 
 
 def find_texture(tex_dir, texture_type):
@@ -598,9 +604,12 @@ def find_non_overlapping_position(
     placed_positions,
     plane_size,
     safe_margin,
-    max_attempts=30,
+    max_attempts=100,
 ):
-    while max_attempts:
+    best_pos = None
+    best_min_distance = -1
+
+    for _ in range(max_attempts):
         x_pos = random.uniform(
             -plane_size / 2 + safe_margin, plane_size / 2 - safe_margin
         )
@@ -608,30 +617,39 @@ def find_non_overlapping_position(
             -plane_size / 2 + safe_margin, plane_size / 2 - safe_margin
         )
 
-        # 각 기존 객체와의 거리 계산
-        too_close = False
-        for prev_x, prev_y, prev_obj_size in placed_positions:
-            distance_sq = (x_pos - prev_x) ** 2 + (y_pos - prev_y) ** 2
-            required_distance = (obj_size + prev_obj_size) * 0.75
-            if distance_sq < required_distance**2:
-                too_close = True
-                break
-
+        # 경계 체크
         obj_radius = obj_size * 0.6
-        boundary_check = (
+        if not (
             abs(x_pos) + obj_radius <= plane_size / 2 - safe_margin
             and abs(y_pos) + obj_radius <= plane_size / 2 - safe_margin
-        )
+        ):
+            continue
 
-        if not too_close and boundary_check:
+        # 각 기존 객체와의 거리 계산
+        min_clearance = float("inf")
+        for prev_x, prev_y, prev_obj_size in placed_positions:
+            distance = math.sqrt((x_pos - prev_x) ** 2 + (y_pos - prev_y) ** 2)
+            required_distance = (obj_size + prev_obj_size) * 0.6
+            clearance = distance - required_distance
+            min_clearance = min(min_clearance, clearance)
+
+        # 충분한 여유 공간이 있으면 바로 반환
+        if min_clearance > 0:
             return x_pos, y_pos
-        max_attempts -= 1
 
-    # 적절한 위치를 못 찾으면 더 안전한 위치 사용
-    return (
-        random.uniform(-plane_size / 3, plane_size / 3),
-        random.uniform(-plane_size / 3, plane_size / 3),
-    )
+        # 가장 덜 겹치는 위치 저장 (fallback용)
+        if min_clearance > best_min_distance:
+            best_min_distance = min_clearance
+            best_pos = (x_pos, y_pos)
+
+    # fallback: 가장 덜 겹치는 위치 반환
+    if best_pos:
+        print(
+            f"Warning: Could not find non-overlapping position, using best available (clearance: {best_min_distance:.2f})"
+        )
+        return best_pos
+
+    return (0, 0)
 
 
 def prepare_glb_insertion_object(glb_object_to_file):
@@ -669,219 +687,6 @@ def prepare_glb_insertion_object(glb_object_to_file):
         "rotation": list(parent_object.rotation_euler),
         "scale": list(parent_object.scale),
     }
-
-
-def render_glb_scenes(args, dataset_dir, camera, insertion_object):
-    """GLB object 렌더링"""
-    # AFTER: 모든 객체
-    render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
-
-    # GLB 객체 숨기기
-    hidden_object_info = hide_selected_glb_object(insertion_object)
-
-    if hidden_object_info:
-        # OBJECT ONLY
-        render_glb_object_only(camera, insertion_object, dataset_dir, args)
-
-        # OBJECT ONLY 이후: 모든 객체 다시 보이게 복원
-        for obj in bpy.data.objects:
-            if obj != camera:
-                obj.hide_render = False
-
-        # BEFORE: 인서션 오브젝트(및 자식)만 숨기고 렌더
-        insertion_object_name = (
-            insertion_object.get("name") if isinstance(insertion_object, dict) else None
-        )
-        insertion_obj = (
-            bpy.data.objects.get(insertion_object_name)
-            if insertion_object_name
-            else None
-        )
-        if insertion_obj:
-            insertion_objects = []
-            if insertion_obj.type == "EMPTY":
-
-                def collect_all_children(obj):
-                    insertion_objects.append(obj)
-                    for child in obj.children:
-                        collect_all_children(child)
-
-                collect_all_children(insertion_obj)
-            else:
-                insertion_objects.append(insertion_obj)
-            for obj in insertion_objects:
-                obj.hide_render = True
-
-        if not bpy.context.scene:
-            raise RuntimeError
-        bpy.context.scene.render.film_transparent = False
-        render_scene(camera, f"{args.dataset_id}_before.png", dataset_dir)
-        convert_png_to_jpg(
-            dataset_dir / f"{args.dataset_id}_before.png",
-            dataset_dir / f"{args.dataset_id}_before.jpg",
-        )
-
-
-def render_scenes_with_prepared_camera(
-    args,
-    dataset_dir,
-    camera,
-    insertion_object,
-    selected_angle,
-    center,
-):
-    """준비된 카메라로 씬 렌더링"""
-    render_glb_scenes(args, dataset_dir, camera, insertion_object)
-    print(f"Selected diagonal angle: {selected_angle}")
-    print("Object insertion dataset completed!")
-    return camera, insertion_object, selected_angle, center
-
-
-def hide_selected_glb_object(insertion_object):
-    """선택된 GLB 객체를 숨기기"""
-    if not insertion_object or "name" not in insertion_object:
-        return None
-
-    target_name = insertion_object["name"]
-    target_object = bpy.data.objects.get(target_name)
-
-    if not target_object:
-        print(f"Warning: Object {target_name} not found")
-        return None
-
-    print(
-        f"Selected GLB object for hiding: {target_name}, file: {insertion_object['file']}, position: ({target_object.location.x:.2f}, {target_object.location.y:.2f})"
-    )
-
-    # 선택된 객체와 모든 자식 객체들을 찾아서 렌더링에서 숨기기
-    objects_to_hide = []
-    if target_object.type == "EMPTY":
-
-        def collect_all_children(obj):
-            objects_to_hide.append(obj)
-            for child in obj.children:
-                collect_all_children(child)
-
-        collect_all_children(target_object)
-    else:
-        objects_to_hide.append(target_object)
-
-    # 객체들 숨기기
-    hidden_count = 0
-    for obj in objects_to_hide:
-        if not obj.hide_render:
-            obj.hide_render = True
-            hidden_count += 1
-            print(f"Hiding object from render: {obj.name}")
-
-    print(f"GLB object hidden successfully. Total {hidden_count} objects hidden.")
-    return insertion_object
-
-
-def render_glb_object_only(camera, insertion_object, dataset_dir, args):
-    """GLB insertion object만 렌더링"""
-    if not insertion_object or "name" not in insertion_object:
-        print("Warning: No insertion object to render")
-        return
-
-    insertion_object_name = insertion_object["name"]
-    insertion_obj = bpy.data.objects.get(insertion_object_name)
-
-    if insertion_obj:
-        print(
-            f"Found insertion object: {insertion_object_name}, type: {insertion_obj.type}"
-        )
-
-        # insertion object와 관련된 모든 객체들 찾기
-        insertion_objects = []
-        if insertion_obj.type == "EMPTY":
-
-            def collect_all_children(obj):
-                insertion_objects.append(obj)
-                for child in obj.children:
-                    collect_all_children(child)
-
-            collect_all_children(insertion_obj)
-        else:
-            insertion_objects.append(insertion_obj)
-
-        # insertion object들 보이게 하기
-        for obj in insertion_objects:
-            if obj.hide_render:
-                obj.hide_render = False
-                print(f"Showing insertion object: {obj.name}")
-
-        # 다른 모든 객체들을 카메라에서만 숨기기 (반사는 유지)
-        hidden_objects = []
-        for obj in bpy.data.objects:
-            if (
-                obj not in insertion_objects
-                and obj != camera
-                and obj.type
-                in [
-                    "MESH",
-                    "EMPTY",
-                    "CURVE",
-                    "SURFACE",
-                    "META",
-                    "FONT",
-                    "HAIR",
-                    "POINTCLOUD",
-                    "VOLUME",
-                    "GPENCIL",
-                ]
-            ):
-                if not obj.hide_render:
-                    obj.visible_camera = False
-                    hidden_objects.append(obj)
-                    print(f"Hidden from camera (keeping reflections): {obj.name}")
-
-        # 투명 배경으로 설정
-        if not bpy.context.scene:
-            raise RuntimeError
-        bpy.context.scene.render.film_transparent = True
-        print("Set film_transparent = True for object-only render")
-
-        # OBJECT 렌더링
-        render_scene(camera, f"{args.dataset_id}_object.png", dataset_dir)
-        print(
-            f"Rendered GLB insertion object only (OBJECT): {args.dataset_id}_object.png"
-        )
-
-        # 카메라 가시성 복원
-        for obj in hidden_objects:
-            obj.visible_camera = True
-            print(f"Restored camera visibility: {obj.name}")
-    else:
-        print(f"Warning: Insertion object {insertion_object_name} not found in scene")
-
-
-def render_scenes(args, dataset_dir, glb_object_to_file):
-    """씬 렌더링 (before/after)"""
-    center, _ = calculate_scene_bounds()
-    center = Vector((0, 0, 0))
-
-    diagonal_angles = [
-        (1.5, 1.5, 1.2),
-        (-1.5, 1.5, 1.2),
-        (1.5, -1.5, 1.2),
-        (-1.5, -1.5, 1.2),
-        (1.8, 0.8, 0.8),
-        (-1.8, 0.8, 0.8),
-        (0.8, 1.8, 0.8),
-        (-0.8, -1.8, 0.8),
-    ]
-
-    selected_angle = random.choice(diagonal_angles)
-    camera = setup_camera(center, "Camera_Diagonal", selected_angle)
-
-    # Insertion object 생성
-    insertion_object = hide_glb_object_for_insertion(glb_object_to_file)
-
-    # 렌더링 수행
-    render_glb_scenes(args, dataset_dir, camera, insertion_object)
-
-    return camera, insertion_object, selected_angle, center
 
 
 def world_to_pixel_coordinates(world_location, camera, scene):
@@ -1077,14 +882,27 @@ def main():
     insertion_object = prepare_glb_insertion_object(glb_object_to_file)
 
     # 렌더링
-    camera, insertion_object, selected_angle, _ = render_scenes_with_prepared_camera(
-        args,
-        dataset_dir,
+    render_scene(camera, f"{args.dataset_id}_after.png", dataset_dir)
+    render_scene(
         camera,
-        insertion_object,
-        selected_angle,
-        Vector((0, 0, 0)),
+        f"{args.dataset_id}_object.png",
+        dataset_dir,
+        insertion_object=insertion_object,
+        object_only=True,
     )
+    render_scene(
+        camera,
+        f"{args.dataset_id}_before.png",
+        dataset_dir,
+        insertion_object=insertion_object,
+        hide_insertion=True,
+    )
+    convert_png_to_jpg(
+        dataset_dir / f"{args.dataset_id}_before.png",
+        dataset_dir / f"{args.dataset_id}_before.jpg",
+    )
+    print(f"Selected diagonal angle: {selected_angle}")
+    print("Object insertion dataset completed!")
 
     # 메타데이터 저장 및 블렌더 파일 저장
     save_metadata(args, dataset_dir, camera, insertion_object)
