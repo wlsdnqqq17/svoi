@@ -1,6 +1,6 @@
 bpy
 opencv-python
-mathutils
 objaverse
-pymeshlab
-lpips
+fake-bpy-module
+mathutils
+scipy
