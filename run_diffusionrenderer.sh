@@ -14,16 +14,14 @@ else
     echo "Error: File dataset/${EXPERIMENT_NUM}/${EXPERIMENT_NUM}_after.png not found"
     exit 1
 fi
-# scp "out/l${EXPERIMENT_NUM}/gt.png" "gpu-server:diffusion-renderer/inference_input_dir/l${EXPERIMENT_NUM}/frame000.png"
 ssh gpu-server "cd diffusion-renderer/inference_input_dir/${EXPERIMENT_NUM} && for i in \$(seq -w 1 23); do cp frame000.png frame0\${i}.png; done"
-# ssh gpu-server "cd diffusion-renderer/inference_input_dir/l${EXPERIMENT_NUM} && for i in \$(seq -w 1 23); do cp frame000.png frame0\${i}.png; done"
+
 if [ -f "input/${EXPERIMENT_NUM}/global.exr" ]; then
     scp "input/${EXPERIMENT_NUM}/global.exr" "gpu-server:diffusion-renderer/examples/hdri/"
 else
     echo "Error: File input/${EXPERIMENT_NUM}/global.exr not found"
     exit 1
 fi
-# scp "input/l${EXPERIMENT_NUM}/global.exr" "gpu-server:diffusion-renderer/examples/hdri/"
 
 
 
@@ -51,8 +49,8 @@ export NVCC_APPEND_FLAGS="--allow-unsupported-compiler"
 export CUDA_NVCC_FLAGS="--allow-unsupported-compiler"
 export TORCH_NVCC_FLAGS="--allow-unsupported-compiler"
 
-CUDA_VISIBLE_DEVICES=1 python inference_svd_rgbx.py --config configs/rgbx_inference.yaml
-CUDA_VISIBLE_DEVICES=1 python inference_svd_xrgb.py --config configs/xrgb_inference.yaml
+CUDA_VISIBLE_DEVICES=7 python inference_svd_rgbx.py --config configs/rgbx_inference.yaml
+CUDA_VISIBLE_DEVICES=7 python inference_svd_xrgb.py --config configs/xrgb_inference.yaml
 EOF
 
 mkdir -p out/${EXPERIMENT_NUM}
